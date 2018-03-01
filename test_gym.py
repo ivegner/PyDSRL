@@ -27,7 +27,7 @@ if __name__ == '__main__':
     env.seed(0)
     agent = RandomAgent(env.action_space)
 
-    steps = 1000
+    steps = 100
     episodes = 10
     reward = 0
     done = False

@@ -16,13 +16,14 @@ class CrossCircleBase(gym.Env):
         'render.modes': ['human'],
     }
 
-    def __init__(self, field_dim=50):
-        self.field_dim = field_dim
+    def __init__(self):
+        self.field_dim = 50
         self.entity_size = 5
         self.render_wait = 1
+        self.num_entities = 16
 
         self.action_space = spaces.Discrete(4)
-        self.observation_space = spaces.Box(0, 1, shape=(field_dim, field_dim), dtype='f')
+        self.observation_space = spaces.Box(0, 1, shape=(self.field_dim, self.field_dim), dtype='f')
         self.reward_range = (-1, 1)
         self.state = {'circle': np.zeros((self.field_dim, self.field_dim)),
                       'cross': np.zeros((self.field_dim, self.field_dim)),
@@ -64,9 +65,8 @@ class CrossCircleBase(gym.Env):
         else:
             reward = 0
 
-        is_over = reward == -1
         info = {'entities': self.entities, 'agent': self.agent}
-        return self.combined_state, reward, is_over, info
+        return self.combined_state, reward, False, info
 
     def reset(self):
         '''Clear entities and state, call setup_field()'''
@@ -82,8 +82,10 @@ class CrossCircleBase(gym.Env):
         '''Calls layout. Meant as a chance for subclasses to alter layout() call'''
         raise NotImplementedError('Needs to be implemented in subclasses')
 
-    def layout(self, random=True, mixed=True, num_entities=16):
+    def layout(self, random=True, mixed=True, num_entities=None):
         '''Sets up agent, crosses and circles on field. DOES NOT CLEAR FIELD.'''
+        if num_entities is None:
+            num_entities = self.num_entities
         self.agent['center'] = self._round_int_ndarray((self.field_dim/2, self.field_dim/2))
         self.agent['top_left'] = self._round_int_ndarray(self.agent['center'] - self.entity_size/2)
         self._draw_entity(self.agent['top_left'], 'agent')
