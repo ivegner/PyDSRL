@@ -1,24 +1,28 @@
 import argparse
+import os.path
 
 import gym
 from gym import logger
 from sklearn.model_selection import train_test_split
 import numpy as np
+import pickle
 
 import cross_circle_gym
 from components import RandomAgent
 from components.autoencoder import SymbolAutoencoder
-from matplotlib import pyplot as plt
 
 parser = argparse.ArgumentParser(description=None)
 parser.add_argument('env_id', nargs='?', default='CrossCircle-MixedRand-v0', help='Select the environment to run')
 parser.add_argument('--load', type=str, help='load existing model from filename provided')
 parser.add_argument('--load-train', action='store_true', help='load existing model from filename provided and keep training')
+parser.add_argument('--new-images', action='store_true', help='make new set of training images')
+parser.add_argument('--enhancements', action='store_true', help='activate own improvements over original paper')
 parser.add_argument('--visualize', '--vis', action='store_true', help='plot autoencoder input & output')
 parser.add_argument('--save', type=str, help='save model to filename provided')
 
 args = parser.parse_args()
 
+TRAIN_IMAGES_FILE = 'train_images.pkl'
 # You can set the level to logger.DEBUG or logger.WARN if you
 # want to change the amount of output.
 logger.set_level(logger.INFO)
@@ -33,8 +37,16 @@ def make_autoencoder_train_data(num, min_entities=1, max_entities=30):
         states.append(temp_env.make_random_state())
     return np.asarray(states)
 
-logger.info('Making test images...')
-images = make_autoencoder_train_data(5000, max_entities=30)
+if not os.path.exists(TRAIN_IMAGES_FILE) or args.new_images:
+    logger.info('Making test images...')
+    images = make_autoencoder_train_data(5000, max_entities=30)
+    with open(TRAIN_IMAGES_FILE, 'wb') as f:
+        pickle.dump(images, f)
+else:
+    logger.info('Loading test images...')
+    with open(TRAIN_IMAGES_FILE, 'rb') as f:
+        images = pickle.load(f)
+
 input_shape = images[0].shape + (1,)
 if args.load:
     autoencoder = SymbolAutoencoder.from_saved(args.load, input_shape)
@@ -50,46 +62,17 @@ X_test = np.reshape(X_test, (len(X_test),) + X_test[0].shape + (1,))
 X_val = np.reshape(X_val, (len(X_val),) + X_val[0].shape + (1,))
 
 if args.load_train or not args.load:
+    logger.info('Training...')
     autoencoder.train(X_train, epochs=10, validation=X_val)
 if args.save:
-    logger.info('Training...')
     autoencoder.save_weights(args.save)
 
 if args.visualize:
     #Visualize autoencoder
+    vis_imgs = X_test[:10]
+    autoencoder.visualize(vis_imgs)
 
-    encoded_imgs = autoencoder.encode(X_test)
-    encoded_imgs = (encoded_imgs > 1) * encoded_imgs
-    encoded_imgs = np.sum(encoded_imgs, axis=3)
-
-    decoded_imgs = autoencoder.predict(X_test)
-
-    n = 10
-    plt.figure(figsize=(30, 4))
-    for i in range(1, n):
-        # display original
-        ax = plt.subplot(3, n, i)
-        plt.imshow(X_test[i].reshape(images[0].shape))
-        plt.gray()
-        ax.get_xaxis().set_visible(False)
-        ax.get_yaxis().set_visible(False)
-
-        # display reconstruction
-        ax = plt.subplot(3, n, i + n)
-        plt.imshow(decoded_imgs[i].reshape(images[0].shape))
-        plt.gray()
-        ax.get_xaxis().set_visible(False)
-        ax.get_yaxis().set_visible(False)
-
-        # display salient features
-        ax = plt.subplot(3, n, i + 2*n)
-        plt.imshow(encoded_imgs[i].reshape((images[0].shape[0]//2, images[0].shape[1]//2)))
-        plt.gray()
-        ax.get_xaxis().set_visible(False)
-        ax.get_yaxis().set_visible(False)
-
-    print('\nPlot visible, close it to proceed')
-    plt.show()
+entities = autoencoder.get_entities(X_test[0])
 
 # encoded_image = autoencoder.encode(images[0].reshape((1,)+input_shape))
 # print(encoded_image.shape)

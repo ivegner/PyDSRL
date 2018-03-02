@@ -32,7 +32,7 @@ class CrossCircleBase(gym.Env):
 
         self.seed()
         self.reset()
-        self.viewer = plt.imshow(self.combined_state)
+        self.viewer = None
 
     @property
     def combined_state(self):
@@ -131,6 +131,8 @@ class CrossCircleBase(gym.Env):
 
     def render(self, mode='human'):
         plt.ion()
+        if self.viewer is None:
+            self.viewer = plt.imshow(self.combined_state)
         self.viewer.set_data(self.combined_state)
         plt.pause(self.render_wait)
 
@@ -139,34 +141,36 @@ class CrossCircleBase(gym.Env):
         return [seed]
 
     def _make_shape(self, entity_type):
-        '''Types: circle/cross/agent'''
+        '''Types: circle/cross/agent. -9 is invisible padding'''
         if self.entity_size != 5:
             raise Exception('Only entity size supported right now is 5x5')
 
         if entity_type == 'circle':
+            # pylint:disable=C0326
             return np.array([
-                [0,  1,  1,  1, 0],
-                [1, -9, -9, -9, 1],
-                [1, -9, -9, -9, 1],
-                [1, -9, -9, -9, 1],
-                [0,  1,  1,  1, 0]
+                [-9,  1,  1,  1, -9],
+                [ 1, -9, -9, -9,  1],
+                [ 1, -9, -9, -9,  1],
+                [ 1, -9, -9, -9,  1],
+                [-9,  1,  1,  1, -9]
             ])
         elif entity_type == 'cross':
             return np.array([
-                [1,  0,  0,  0, 1],
-                [0,  1, -9,  1, 0],
-                [0, -9,  1, -9, 0],
-                [0,  1, -9,  1, 0],
-                [1,  0,  0,  0, 1]
+                [ 1, -9, -9, -9,  1],
+                [-9,  1, -9,  1, -9],
+                [-9, -9,  1, -9, -9],
+                [-9,  1, -9,  1, -9],
+                [ 1, -9, -9, -9,  1]
             ])
         elif entity_type == 'agent':
             return np.array([
-                [0,  0, 1,  0, 0],
-                [0, -9, 1, -9, 0],
-                [1,  1, 1,  1, 1],
-                [0, -9, 1, -9, 0],
-                [0,  0, 1,  0, 0]
+                [-9, -9,  1, -9, -9],
+                [-9, -9,  1, -9, -9],
+                [ 1,  1,  1,  1,  1],
+                [-9, -9,  1, -9, -9],
+                [-9, -9,  1, -9, -9]
             ])
+        # pylint:enable=C0326
 
     def _draw_entity(self, top_left, entity_type):
         window = self._get_state_window(top_left)[entity_type]
