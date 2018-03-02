@@ -8,8 +8,6 @@ import numpy as np
 from numpy.lib.stride_tricks import as_strided
 from matplotlib import pyplot as plt
 
-plt.ion()
-
 class CrossCircleBase(gym.Env):
     '''Base class for DSRL paper cross-circle game'''
     metadata = {
@@ -17,7 +15,7 @@ class CrossCircleBase(gym.Env):
     }
 
     def __init__(self):
-        self.field_dim = 50
+        self.field_dim = 100
         self.entity_size = 5
         self.render_wait = 1
         self.num_entities = 16
@@ -77,17 +75,24 @@ class CrossCircleBase(gym.Env):
                       'agent': np.zeros((self.field_dim, self.field_dim))
                      }
         self.setup_field()
+        return self.combined_state
 
     def setup_field(self):
         '''Calls layout. Meant as a chance for subclasses to alter layout() call'''
         raise NotImplementedError('Needs to be implemented in subclasses')
 
-    def layout(self, random=True, mixed=True, num_entities=None):
+    def layout(self, random=True, mixed=True, num_entities=None, random_agent=False):
         '''Sets up agent, crosses and circles on field. DOES NOT CLEAR FIELD.'''
         if num_entities is None:
             num_entities = self.num_entities
-        self.agent['center'] = self._round_int_ndarray((self.field_dim/2, self.field_dim/2))
-        self.agent['top_left'] = self._round_int_ndarray(self.agent['center'] - self.entity_size/2)
+        if random_agent:
+            self.agent['center'] = np.random.randint(self.entity_size/2,
+                                                     self.field_dim-self.entity_size/2,
+                                                     size=(2,))
+            self.agent['top_left'] = self._round_int_ndarray(self.agent['center'] - self.entity_size/2)
+        else:
+            self.agent['center'] = self._round_int_ndarray((self.field_dim/2, self.field_dim/2))
+            self.agent['top_left'] = self._round_int_ndarray(self.agent['center'] - self.entity_size/2)
         self._draw_entity(self.agent['top_left'], 'agent')
 
         if not random:
@@ -125,6 +130,7 @@ class CrossCircleBase(gym.Env):
                 {'center': center, 'top_left': top_left})
 
     def render(self, mode='human'):
+        plt.ion()
         self.viewer.set_data(self.combined_state)
         plt.pause(self.render_wait)
 
@@ -139,27 +145,27 @@ class CrossCircleBase(gym.Env):
 
         if entity_type == 'circle':
             return np.array([
-                [0, 1, 1, 1, 0],
-                [1, 0, 0, 0, 1],
-                [1, 0, 0, 0, 1],
-                [1, 0, 0, 0, 1],
-                [0, 1, 1, 1, 0]
+                [0,  1,  1,  1, 0],
+                [1, -9, -9, -9, 1],
+                [1, -9, -9, -9, 1],
+                [1, -9, -9, -9, 1],
+                [0,  1,  1,  1, 0]
             ])
         elif entity_type == 'cross':
             return np.array([
-                [1, 0, 0, 0, 1],
-                [0, 1, 0, 1, 0],
-                [0, 0, 1, 0, 0],
-                [0, 1, 0, 1, 0],
-                [1, 0, 0, 0, 1]
+                [1,  0,  0,  0, 1],
+                [0,  1, -9,  1, 0],
+                [0, -9,  1, -9, 0],
+                [0,  1, -9,  1, 0],
+                [1,  0,  0,  0, 1]
             ])
         elif entity_type == 'agent':
             return np.array([
-                [0, 0, 1, 0, 0],
-                [0, 0, 1, 0, 0],
-                [1, 1, 1, 1, 1],
-                [0, 0, 1, 0, 0],
-                [0, 0, 1, 0, 0]
+                [0,  0, 1,  0, 0],
+                [0, -9, 1, -9, 0],
+                [1,  1, 1,  1, 1],
+                [0, -9, 1, -9, 0],
+                [0,  0, 1,  0, 0]
             ])
 
     def _draw_entity(self, top_left, entity_type):
@@ -171,7 +177,6 @@ class CrossCircleBase(gym.Env):
         window = self._get_state_window(top_left)[entity_type]
         window[:, :] = np.subtract(
             window, self._make_shape(entity_type))
-
 
     def _get_random_entity_coords(self, entity_type):
         '''Returns tuple of ([center_x, center_y], [top_left_x, top_left_y])'''
@@ -194,7 +199,7 @@ class CrossCircleBase(gym.Env):
             sum_map = np.add(layer_state, shape).astype(int)
             for (sum_x, sum_y), val in np.ndenumerate(sum_map):
                 # if there's a 2, there are 2 1's on top of each other = collision
-                if val == 2:
+                if val == 2 or val == -8 or val==-18:   # 2 = visible collision, -8 or -18 = invisible/padding collision
                     return layer, self._round_int_ndarray((top_left[0] + sum_x, top_left[1] + sum_y))
         return None
 
