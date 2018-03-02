@@ -1,23 +1,30 @@
+'''Main module for the paper's algorithm'''
+#pylint:disable=C0103,R0913
 import argparse
 import os.path
+import pickle
+import numpy as np
 
 import gym
 from gym import logger
 from sklearn.model_selection import train_test_split
-import numpy as np
-import pickle
 
+#pylint:disable=W0611
 import cross_circle_gym
-from components import RandomAgent
+#pylint:enable=W0611
 from components.autoencoder import SymbolAutoencoder
 
 parser = argparse.ArgumentParser(description=None)
-parser.add_argument('env_id', nargs='?', default='CrossCircle-MixedRand-v0', help='Select the environment to run')
+parser.add_argument('env_id', nargs='?', default='CrossCircle-MixedRand-v0',
+                    help='Select the environment to run')
 parser.add_argument('--load', type=str, help='load existing model from filename provided')
-parser.add_argument('--load-train', action='store_true', help='load existing model from filename provided and keep training')
+parser.add_argument('--load-train', action='store_true',
+                    help='load existing model from filename provided and keep training')
 parser.add_argument('--new-images', action='store_true', help='make new set of training images')
-parser.add_argument('--enhancements', action='store_true', help='activate own improvements over original paper')
-parser.add_argument('--visualize', '--vis', action='store_true', help='plot autoencoder input & output')
+parser.add_argument('--enhancements', action='store_true',
+                    help='activate own improvements over original paper')
+parser.add_argument('--visualize', '--vis', action='store_true',
+                    help='plot autoencoder input & output')
 parser.add_argument('--save', type=str, help='save model to filename provided')
 
 args = parser.parse_args()
@@ -30,11 +37,12 @@ env = gym.make(args.env_id)
 seed = env.seed(0)[0]
 
 def make_autoencoder_train_data(num, min_entities=1, max_entities=30):
+    '''Make training images for the autoencoder'''
     temp_env = gym.make('CrossCircle-MixedRand-v0')
     temp_env.seed(0)
     states = []
-    for i in range(num):
-        states.append(temp_env.make_random_state())
+    for _ in range(num):
+        states.append(temp_env.make_random_state(min_entities, max_entities))
     return np.asarray(states)
 
 if not os.path.exists(TRAIN_IMAGES_FILE) or args.new_images:

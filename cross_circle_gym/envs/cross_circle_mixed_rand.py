@@ -1,3 +1,4 @@
+'''Cross-circle game with mixed random rewards'''
 import numpy as np
 from cross_circle_gym.envs.cross_circle_base import CrossCircleBase
 

@@ -1,0 +1,6 @@
+numpy
+gym[atari]
+sklearn
+scipy
+keras
+matplotlib

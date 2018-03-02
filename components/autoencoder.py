@@ -1,6 +1,6 @@
-from keras.layers import Input, Dense, Conv2D, MaxPooling2D, UpSampling2D
+'''Low-level entity extraction autoencoder'''
+from keras.layers import Input, Conv2D, MaxPooling2D, UpSampling2D
 from keras.models import Model
-from keras import backend as K
 from keras.callbacks import TensorBoard
 
 from scipy.ndimage.filters import maximum_filter
@@ -16,33 +16,38 @@ class SymbolAutoencoder():
     '''Implements the DSRL paper section 3.1. Extract entities from raw image'''
     def __init__(self, input_shape):
         input_img = Input(shape=input_shape)
-        x = Conv2D(16, (5, 5), activation='relu', padding='same')(input_img)
-        encoded = MaxPooling2D((2, 2), padding='same')(x)
+        encoded = Conv2D(16, (5, 5), activation='relu', padding='same')(input_img)
+        encoded = MaxPooling2D((2, 2), padding='same')(encoded)
 
-        x = UpSampling2D((2, 2))(encoded)
-        decoded = Conv2D(1, (5, 5), activation='sigmoid', padding='same')(x)
+        decoded = UpSampling2D((2, 2))(encoded)
+        decoded = Conv2D(1, (5, 5), activation='sigmoid', padding='same')(decoded)
 
         self.encoder = Model(input_img, encoded)
         self.autoencoder = Model(input_img, decoded)
         self.autoencoder.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
 
     def train(self, train_data, epochs=50, batch_size=128, shuffle=True,
-                validation=None, tensorboard=False):
+              validation=None, tensorboard=False):
+        '''Train the autoencoder on provided images'''
         if tensorboard:
-            print('Make sure you started the Tensorboard server (tensorboard --logdir=/tmp/autoencoder)\n',
-                  'Go to http://0.0.0.0:6006 to view Tensorboard')
+            print('''Make sure you started the Tensorboard server with
+                     tensorboard --logdir=/tmp/autoencoder
+                     Go to http://0.0.0.0:6006 to view Tensorboard''')
         self.autoencoder.fit(train_data, train_data,
-                        epochs=epochs,
-                        batch_size=batch_size,
-                        shuffle=shuffle,
-                        validation_data=(validation, validation),
-                        callbacks=[TensorBoard(log_dir='/tmp/autoencoder')] if tensorboard else None,
-                        )
+                             epochs=epochs,
+                             batch_size=batch_size,
+                             shuffle=shuffle,
+                             validation_data=(validation, validation),
+                             callbacks=[TensorBoard(log_dir='/tmp/autoencoder')]
+                             if tensorboard else None,
+                            )
 
     def encode(self, data):
+        '''Pass data through the encoder part of the autoencoder'''
         return self.encoder.predict(data)
 
     def predict(self, data):
+        '''Do a full pass through the autoencoder'''
         return self.autoencoder.predict(data)
 
     def extract_positions(self, encoded_image, return_map=False):
@@ -52,8 +57,9 @@ class SymbolAutoencoder():
         features -= background_value
         #apply the local maximum filter; all pixel of maximal value
         #in their neighborhood are set to 1
-        filtered = maximum_filter(features, size=(4,4))    #TODO: Abstract size
-        filtered = np.asarray(filtered == features, dtype=int) - np.asarray(filtered == 0, dtype=int)
+        filtered = maximum_filter(features, size=(4, 4))    #TODO: Abstract size
+        filtered = np.asarray(filtered == features, dtype=int) - np.asarray(filtered == 0,
+                                                                            dtype=int)
         filtered.reshape(encoded_image.shape[:-1])
         if return_map:
             #2d image of the positions
@@ -76,37 +82,38 @@ class SymbolAutoencoder():
             '''Reshape (x, y, 1) array to (x, y)'''
             return np.reshape(array, array.shape[:2])
 
-        n = len(images)
+        n_plots = len(images)
         plt.figure(figsize=(20, 4))
-        for i in range(0, n):
+        for i in range(0, n_plots):
             plt_i = i+1
             # display original
-            ax = plt.subplot(4, n, plt_i)
+            axis = plt.subplot(4, n_plots, plt_i)
             plt.imshow(flatten_to_img(images[i]))
             plt.gray()
-            ax.get_xaxis().set_visible(False)
-            ax.get_yaxis().set_visible(False)
+            axis.get_xaxis().set_visible(False)
+            axis.get_yaxis().set_visible(False)
 
             # display reconstruction
-            ax = plt.subplot(4, n, plt_i + n)
+            axis = plt.subplot(4, n_plots, plt_i + n_plots)
             plt.imshow(flatten_to_img(decoded_imgs[i]))
             plt.gray()
-            ax.get_xaxis().set_visible(False)
-            ax.get_yaxis().set_visible(False)
+            axis.get_xaxis().set_visible(False)
+            axis.get_yaxis().set_visible(False)
 
             # display encoded
-            ax = plt.subplot(4, n, plt_i + 2*n)
-            plt.imshow(np.sum(encoded_imgs[i], axis=2).reshape((images[0].shape[0]//2, images[0].shape[1]//2)))
+            axis = plt.subplot(4, n_plots, plt_i + 2*n_plots)
+            plt.imshow(np.sum(encoded_imgs[i], axis=2).reshape((images[0].shape[0]//2,
+                                                                images[0].shape[1]//2)))
             plt.gray()
-            ax.get_xaxis().set_visible(False)
-            ax.get_yaxis().set_visible(False)
+            axis.get_xaxis().set_visible(False)
+            axis.get_yaxis().set_visible(False)
 
             # display extracted entity centers
-            ax = plt.subplot(4, n, plt_i + 3*n)
+            axis = plt.subplot(4, n_plots, plt_i + 3*n_plots)
             plt.imshow(position_maps[i])
             plt.gray()
-            ax.get_xaxis().set_visible(False)
-            ax.get_yaxis().set_visible(False)
+            axis.get_xaxis().set_visible(False)
+            axis.get_yaxis().set_visible(False)
 
         print('\nPlot visible, close it to proceed')
         plt.show()
@@ -171,9 +178,11 @@ class SymbolAutoencoder():
 
     @staticmethod
     def from_saved(filename, input_shape):
+        '''Load autoencoder weights from filename, given input shape'''
         ret = SymbolAutoencoder(input_shape)
         ret.autoencoder.load_weights(filename)
         return ret
 
     def save_weights(self, filename):
+        '''Save autoencoder weights to file'''
         self.autoencoder.save_weights(filename)
