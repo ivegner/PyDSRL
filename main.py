@@ -13,13 +13,14 @@ from sklearn.model_selection import train_test_split
 import cross_circle_gym
 #pylint:enable=W0611
 from components.autoencoder import SymbolAutoencoder
-from components.agent import DQNAgent
+from components.agent import DQNAgent, DDQNAgent
 
 parser = argparse.ArgumentParser(description=None)
 parser.add_argument('env_id', nargs='?', default='CrossCircle-MixedRand-v0',
                     help='Select the environment to run')
 parser.add_argument('--load', type=str, help='load existing model from filename provided')
-parser.add_argument('--episodes', '-e', type=int, default=50, help='number of DQN training episodes')
+parser.add_argument('--episodes', '-e', type=int, default=1000,
+                    help='number of DQN training episodes')
 parser.add_argument('--load-train', action='store_true',
                     help='load existing model from filename provided and keep training')
 parser.add_argument('--new-images', action='store_true', help='make new set of training images')
@@ -35,6 +36,13 @@ TRAIN_IMAGES_FILE = 'train_images.pkl'
 # You can set the level to logger.DEBUG or logger.WARN if you
 # want to change the amount of output.
 logger.set_level(logger.INFO)
+
+
+
+env = gym.make(args.env_id)
+seed = env.seed(0)[0]
+
+
 
 def make_autoencoder_train_data(num, min_entities=1, max_entities=30):
     '''Make training images for the autoencoder'''
@@ -82,13 +90,13 @@ if args.visualize:
 
 entities = autoencoder.get_entities(X_test[0])
 
-env = gym.make(args.env_id)
-env.seed(0)
-
 state_size = env.observation_space.shape[0]
 action_size = env.action_space.n
-agent = DQNAgent(state_size, action_size)
-# agent.load("./save/cartpole-ddqn.h5")
+if args.enhancements:
+    agent = DDQNAgent(state_size, action_size)
+else:
+    agent = DQNAgent(state_size, action_size)
+# agent.load('./save/cartpole-ddqn.h5')
 done = False
 batch_size = 32
 time_steps = 100
@@ -103,12 +111,13 @@ for e in range(args.episodes):
         next_state = np.reshape(next_state, [1, state_size])
         agent.remember(state, action, reward, next_state, done)
         state = next_state
-        if done or time==time_steps-1:
-            agent.update_target_model()
-            print("episode: {}/{}, score: {}, e: {:.2}"
-                    .format(e, args.episodes, time, agent.epsilon))
+        if done or time == time_steps-1:
+            if args.enhancements:
+                agent.update_target_model()
+            print('episode: {}/{}, score: {}, e: {:.2}'
+                  .format(e, args.episodes, time, agent.epsilon))
             break
     if len(agent.memory) > batch_size:
         agent.replay(batch_size)
     if e % 10 == 0:
-        agent.save("dqn_agent.h5")
+        agent.save('dqn_agent.h5')
