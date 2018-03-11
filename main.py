@@ -89,7 +89,7 @@ if args.visualize:
     autoencoder.visualize(vis_imgs)
 
 entities = autoencoder.get_entities(X_test[0])
-
+print(entities)
 state_size = env.observation_space.shape[0]
 action_size = env.action_space.n
 if args.enhancements:

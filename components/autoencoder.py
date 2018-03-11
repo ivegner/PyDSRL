@@ -130,26 +130,27 @@ class SymbolAutoencoder():
         encoded = self.encode(image.reshape((1,) + image.shape))[0]
         entities = self.extract_positions(encoded)
 
-        repr_entity_activations = []
-        entity_types = []
-        # TODO: Enhancements: knn classifier instead of this caveman art
+        repr_entity_activations = []    # Representative depth slice for a certain type
+        typed_entities = {}   # Actual {type: [entity1, entity2]} dict
+        # TODO: Enhancements: knn classifier instead of this caveman shit
         for entity_coords in entities:
             activations = encoded[entity_coords[0], entity_coords[1], :]
             if not repr_entity_activations:
                 repr_entity_activations.append(activations)
-                entity_types.append([entity_coords])
+                typed_entities['type0'] = [entity_coords]
                 continue
 
             for i, e_activations in enumerate(repr_entity_activations):
                 dist = sqeuclidean(activations, e_activations)
-                if dist < ENTITY_DIST_THRESHOLD:
-                    # Same type
-                    entity_types[i].append(entity_coords)
+                if dist < ENTITY_DIST_THRESHOLD:    # Same type
+                    repr_entity_activations[i] = (e_activations + activations) / 2
+                    typed_entities['type' + str(i)].append([entity_coords])
                     break
             else:
                 # No type match, make new type
                 repr_entity_activations.append(activations)
-                entity_types.append([entity_coords])
+                new_type_idx = len(repr_entity_activations) - 1
+                typed_entities['type' + str(new_type_idx)] = [entity_coords]
 
 
         # plt.figure()
@@ -169,12 +170,12 @@ class SymbolAutoencoder():
         # plt.show()
         # Images are compressed, multiply by 2 for real indices
 
-        # sort arrays by sum of activations to ensure that same objects are
-        # (probably) in the same type index every time
-        sorted_perm = np.sum(repr_entity_activations, axis=1).argsort()
-        entity_types = np.asarray(entity_types)[sorted_perm]
-        # repr_entity_activations = repr_entity_activations[sorted_perm]
-        return entity_types.tolist()
+        # # sort arrays by sum of activations to ensure that same objects are
+        # # (probably) in the same type index every time
+        # sorted_perm = np.sum(repr_entity_activations, axis=1).argsort()
+        # typed_entities = np.asarray(typed_entities)[sorted_perm]
+        # # repr_entity_activations = repr_entity_activations[sorted_perm]
+        return typed_entities
 
     @staticmethod
     def from_saved(filename, input_shape):
