@@ -11,15 +11,17 @@ from gym import logger
 from matplotlib import pyplot as plt
 
 ENTITY_DIST_THRESHOLD = 0.25
+POOL_SIZE = 2
+NEIGHBOR_RADIUS = 25    # 1/2 side of square in which to search for neighbors
 
 class SymbolAutoencoder():
     '''Implements the DSRL paper section 3.1. Extract entities from raw image'''
     def __init__(self, input_shape):
         input_img = Input(shape=input_shape)
         encoded = Conv2D(16, (5, 5), activation='relu', padding='same')(input_img)
-        encoded = MaxPooling2D((2, 2), padding='same')(encoded)
+        encoded = MaxPooling2D((POOL_SIZE, POOL_SIZE), padding='same')(encoded)
 
-        decoded = UpSampling2D((2, 2))(encoded)
+        decoded = UpSampling2D((POOL_SIZE, POOL_SIZE))(encoded)
         decoded = Conv2D(1, (5, 5), activation='sigmoid', padding='same')(decoded)
 
         self.encoder = Model(input_img, encoded)
@@ -50,7 +52,7 @@ class SymbolAutoencoder():
         '''Do a full pass through the autoencoder'''
         return self.autoencoder.predict(data)
 
-    def extract_positions(self, encoded_image, return_map=False):
+    def _extract_positions(self, encoded_image):
         '''Finds locations of pixels of entities in the image'''
         features = np.max(encoded_image, axis=2)
         background_value = stats.mode(features, axis=None)[0][0]
@@ -61,21 +63,18 @@ class SymbolAutoencoder():
         filtered = np.asarray(filtered == features, dtype=int) - np.asarray(filtered == 0,
                                                                             dtype=int)
         filtered.reshape(encoded_image.shape[:-1])
-        if return_map:
-            #2d image of the positions
-            return filtered
-        else:
-            #just the indices
-            return np.transpose(np.nonzero(filtered))
+        filtered *= POOL_SIZE # Pooling = downsampling = everything is scaled down by POOL_SIZE
+        #2d image of the positions, and just the indices
+        return filtered, np.transpose(np.nonzero(filtered))
 
     def visualize(self, images):
         '''Visualize autoencoder processing steps'''
         if len(images) > 20:
-            raise Exception('Too many visualization images, please provide <20')
+            raise Exception('Too many visualization images, please provide <= 20')
         logger.info('Visualizing...')
 
         encoded_imgs = self.encode(images)
-        position_maps = [self.extract_positions(x, return_map=True) for x in encoded_imgs]
+        position_maps = [self._extract_positions(x)[0] for x in encoded_imgs]
         decoded_imgs = self.predict(images)
 
         def flatten_to_img(array):
@@ -128,54 +127,41 @@ class SymbolAutoencoder():
         '''
 
         encoded = self.encode(image.reshape((1,) + image.shape))[0]
-        entities = self.extract_positions(encoded)
+        pos_map, entities = self._extract_positions(encoded)
 
         repr_entity_activations = []    # Representative depth slice for a certain type
-        typed_entities = {}   # Actual {type: [entity1, entity2]} dict
+        typed_entities = []   # Actual Entity() array
+        found_types = []
         # TODO: Enhancements: knn classifier instead of this caveman shit
         for entity_coords in entities:
             activations = encoded[entity_coords[0], entity_coords[1], :]
             if not repr_entity_activations:
                 repr_entity_activations.append(activations)
-                typed_entities['type0'] = [entity_coords]
-                continue
+                e_type = 'type0'
 
-            for i, e_activations in enumerate(repr_entity_activations):
-                dist = sqeuclidean(activations, e_activations)
-                if dist < ENTITY_DIST_THRESHOLD:    # Same type
-                    repr_entity_activations[i] = (e_activations + activations) / 2
-                    typed_entities['type' + str(i)].append([entity_coords])
-                    break
             else:
-                # No type match, make new type
-                repr_entity_activations.append(activations)
-                new_type_idx = len(repr_entity_activations) - 1
-                typed_entities['type' + str(new_type_idx)] = [entity_coords]
+                for i, e_activations in enumerate(repr_entity_activations):
+                    dist = sqeuclidean(activations, e_activations)
+                    if dist < ENTITY_DIST_THRESHOLD:    # Same type
+                        repr_entity_activations[i] = (e_activations + activations) / 2
+                        e_type = 'type' + str(i)
+                        break
+                else:
+                    # No type match, make new type
+                    repr_entity_activations.append(activations)
+                    new_type_idx = len(repr_entity_activations) - 1
+                    e_type = 'type' + str(new_type_idx)
 
+            min_coords, max_coords = entity_coords-NEIGHBOR_RADIUS, entity_coords+NEIGHBOR_RADIUS
+            n_neighbors = np.count_nonzero(pos_map[min_coords[0]:max_coords[0],
+                                                   min_coords[1]:max_coords[1]])
+            typed_entities.append(Entity(position=entity_coords,
+                                         entity_type=e_type,
+                                         n_neighbors=n_neighbors))
+            if e_type not in found_types:
+                found_types.append(e_type)
 
-        # plt.figure()
-        # pos_map = self.extract_positions(encoded, return_map=True)
-        # # display original
-        # ax = plt.subplot(2, 1, 1)
-        # plt.imshow(pos_map)
-        # plt.gray()
-        # ax.get_xaxis().set_visible(False)
-        # ax.get_yaxis().set_visible(False)
-
-        # ax = plt.subplot(2, 1, 2)
-        # plt.imshow(image.reshape(image.shape[:-1]))
-        # plt.gray()
-        # ax.get_xaxis().set_visible(False)
-        # ax.get_yaxis().set_visible(False)
-        # plt.show()
-        # Images are compressed, multiply by 2 for real indices
-
-        # # sort arrays by sum of activations to ensure that same objects are
-        # # (probably) in the same type index every time
-        # sorted_perm = np.sum(repr_entity_activations, axis=1).argsort()
-        # typed_entities = np.asarray(typed_entities)[sorted_perm]
-        # # repr_entity_activations = repr_entity_activations[sorted_perm]
-        return typed_entities
+        return typed_entities, found_types
 
     @staticmethod
     def from_saved(filename, input_shape):
@@ -187,3 +173,35 @@ class SymbolAutoencoder():
     def save_weights(self, filename):
         '''Save autoencoder weights to file'''
         self.autoencoder.save_weights(filename)
+
+class Entity():
+    '''Class for an entity that has an id, attributes, etc.'''
+    def __init__(self, position, entity_type, n_neighbors=None, tracking_id=None):
+        self.position = position
+        self.entity_type = entity_type
+        self.id = tracking_id
+        self.last_transition = None
+        self.neighbors = n_neighbors
+        # Used for calculating interactions
+        self.prev_state = {'position': self.position, 'type': self.entity_type}
+        # Used for marking entities for deletion
+        self.exists = 1
+
+    def update_self(self, entity):
+        '''Update own params based on new entity object'''
+        self.prev_state = {'position': self.position, 'type': self.entity_type}
+        self.position = entity.position
+        self._transition(self.entity_type, entity.entity_type)
+
+    def appeared(self):
+        '''Set object transition as having spawned'''
+        self._transition('null', self.entity_type)
+
+    def disappeared(self):
+        '''Set object transition as despawned, and mark it for deletion'''
+        self._transition(self.entity_type, 'null')
+        self.exists = 0 # mark for deletion
+
+    def _transition(self, from_type, to_type):
+        self.last_transition = [from_type, to_type]
+        self.entity_type = to_type

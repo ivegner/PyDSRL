@@ -4,3 +4,4 @@ sklearn
 scipy
 keras
 matplotlib
+pandas

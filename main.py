@@ -13,6 +13,7 @@ from sklearn.model_selection import train_test_split
 import cross_circle_gym
 #pylint:enable=W0611
 from components.autoencoder import SymbolAutoencoder
+from components.state_builder import StateRepresentationBuilder
 from components.agent import DQNAgent, DDQNAgent
 
 parser = argparse.ArgumentParser(description=None)
@@ -88,36 +89,41 @@ if args.visualize:
     vis_imgs = X_test[:10]
     autoencoder.visualize(vis_imgs)
 
-entities = autoencoder.get_entities(X_test[0])
+entities, found_types = autoencoder.get_entities(X_test[0])
 print(entities)
-state_size = env.observation_space.shape[0]
-action_size = env.action_space.n
-if args.enhancements:
-    agent = DDQNAgent(state_size, action_size)
-else:
-    agent = DQNAgent(state_size, action_size)
-# agent.load('./save/cartpole-ddqn.h5')
-done = False
-batch_size = 32
-time_steps = 100
 
-for e in range(args.episodes):
-    state = env.reset()
-    state = np.reshape(state, [1, state_size])
-    for time in range(time_steps):
-        env.render()
-        action = agent.act(state)
-        next_state, reward, done, _ = env.step(action)
-        next_state = np.reshape(next_state, [1, state_size])
-        agent.remember(state, action, reward, next_state, done)
-        state = next_state
-        if done or time == time_steps-1:
-            if args.enhancements:
-                agent.update_target_model()
-            print('episode: {}/{}, score: {}, e: {:.2}'
-                  .format(e, args.episodes, time, agent.epsilon))
-            break
-    if len(agent.memory) > batch_size:
-        agent.replay(batch_size)
-    if e % 10 == 0:
-        agent.save('dqn_agent.h5')
+state_builder = StateRepresentationBuilder()
+state = state_builder.build_state(entities, found_types)
+print(state)
+
+# state_size = None # TODO
+# action_size = env.action_space.n
+# if args.enhancements:
+#     agent = DDQNAgent(state_size, action_size)
+# else:
+#     agent = DQNAgent(state_size, action_size)
+# # agent.load('./save/cartpole-ddqn.h5')
+# done = False
+# batch_size = 32
+# time_steps = 100
+
+# for e in range(args.episodes):
+#     state = env.reset()
+#     state = np.reshape(state, [1, state_size])
+#     for time in range(time_steps):
+#         env.render()
+#         action = agent.act(state)
+#         next_state, reward, done, _ = env.step(action)
+#         next_state = np.reshape(next_state, [1, state_size])
+#         agent.remember(state, action, reward, next_state, done)
+#         state = next_state
+#         if done or time == time_steps-1:
+#             if args.enhancements:
+#                 agent.update_target_model()
+#             print('episode: {}/{}, score: {}, e: {:.2}'
+#                   .format(e, args.episodes, time, agent.epsilon))
+#             break
+#     if len(agent.memory) > batch_size:
+#         agent.replay(batch_size)
+#     if e % 10 == 0:
+#         agent.save('dqn_agent.h5')
