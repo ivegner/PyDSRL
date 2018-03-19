@@ -21,13 +21,16 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 '''
+import pickle
 import random
-import numpy as np
 from collections import deque
-from keras.models import Sequential
-from keras.layers import Dense
-from keras.optimizers import Adam
+
+import numpy as np
 from keras import backend as K
+from keras.layers import Dense
+from keras.models import Sequential
+from keras.optimizers import Adam
+
 
 class DDQNAgent:
     def __init__(self, state_size, action_size):
@@ -91,52 +94,67 @@ class DDQNAgent:
     def save(self, name):
         self.model.save_weights(name)
 
-class DQNAgent:
-    def __init__(self, state_size, action_size):
-        self.state_size = state_size
+class TabularAgent:
+    '''RL agent as described in the DSRL paper'''
+    def __init__(self, action_size, neighbor_radius=25):
         self.action_size = action_size
-        self.memory = deque(maxlen=2000)
-        self.gamma = 0.95    # discount rate
-        self.epsilon = 1.0  # exploration rate
-        self.epsilon_min = 0.01
-        self.epsilon_decay = 0.995
-        self.learning_rate = 0.001
-        self.model = self._build_model()
-
-    def _build_model(self):
-        # Neural Net for Deep-Q learning Model
-        model = Sequential()
-        model.add(Dense(24, input_dim=self.state_size, activation='relu'))
-        model.add(Dense(24, activation='relu'))
-        model.add(Dense(self.action_size, activation='linear'))
-        model.compile(loss='mse',
-                      optimizer=Adam(lr=self.learning_rate))
-        return model
-
-    def remember(self, state, action, reward, next_state, done):
-        self.memory.append((state, action, reward, next_state, done))
+        self.epsilon = 0.1
+        self.gamma = 0.95
+        self.neighbor_radius=neighbor_radius
+        self.tables = {}
 
     def act(self, state):
+        '''
+        Determines action to take based on given state
+        State: Array of interactions
+               (entities in each interaction are presorted by type for consistency)
+        Returns: action to take, chosen e-greedily
+        '''
         if np.random.rand() <= self.epsilon:
             return random.randrange(self.action_size)
-        act_values = self.model.predict(state)
-        return np.argmax(act_values[0])  # returns action
+        return np.argmax(self._total_rewards(state))  # returns action
 
-    def replay(self, batch_size):
-        minibatch = random.sample(self.memory, batch_size)
-        for state, action, reward, next_state, done in minibatch:
-            target = reward
-            if not done:
-                target = (reward + self.gamma *
-                          np.amax(self.model.predict(next_state)[0]))
-            target_f = self.model.predict(state)
-            target_f[0][action] = target
-            self.model.fit(state, target_f, epochs=1, verbose=0)
-        if self.epsilon > self.epsilon_min:
-            self.epsilon *= self.epsilon_decay
+    def update(self, state, action, reward, next_state, done):
+        '''Update tables based on reward and action taken'''
+        for interaction in state:
+            type_1, type_2 = interaction['types_after'] # TODO resolve: should this too be types_before?
+            table = self.tables.setdefault(type_1, {}).setdefault(type_2, self._make_table())
 
-    def load(self, name):
-        self.model.load_weights(name)
+            if done:
+                table[interaction['loc_difference']][action] = reward
+            else:
+                a = self._total_rewards(next_state)
+                table[interaction['loc_difference']][action] = reward + self.gamma * np.max(a)
 
-    def save(self, name):
-        self.model.save_weights(name)
+    def _total_rewards(self, interactions):
+        action_rewards = np.zeros(self.action_size)
+        for interaction in interactions:
+            type_1, type_2 = interaction['types_before']
+            table = self.tables.setdefault(type_1, {}).setdefault(type_2, self._make_table())
+            action_rewards += table[interaction['loc_difference']]  # add q-value arrays
+        return action_rewards
+
+    def _make_table(self):
+        '''
+        Makes table for q-learning
+        3-D table: rows = loc_difference_x, cols = loc_difference_y, z = q-values for actions
+        Rows and cols added to as needed
+        '''
+        return np.zeros((self.neighbor_radius * 2, self.neighbor_radius * 2, self.action_size),
+                        dtype=int)
+
+    def save(self, filename):
+        '''Save agent's tables'''
+        with open(filename, 'wb') as f_p:
+            pickle.dump(self.tables, f_p)
+
+    @staticmethod
+    def from_saved(filename, action_size):
+        '''Load agent from filename'''
+        with open(filename, 'rb') as f_p:
+            tables = pickle.load(f_p)
+            ret = TabularAgent(action_size)
+            assert len(tables.values()[0].values()[0][0, 0]) == action_size, \
+                   'Action size given to from_saved doesn\'t match the one in the tables'
+            ret.tables = tables
+        return ret

@@ -12,11 +12,12 @@ from matplotlib import pyplot as plt
 
 ENTITY_DIST_THRESHOLD = 0.25
 POOL_SIZE = 2
-NEIGHBOR_RADIUS = 25    # 1/2 side of square in which to search for neighbors
 
 class SymbolAutoencoder():
     '''Implements the DSRL paper section 3.1. Extract entities from raw image'''
-    def __init__(self, input_shape):
+    def __init__(self, input_shape, neighbor_radius=25):
+        self.neighbor_radius = neighbor_radius
+
         input_img = Input(shape=input_shape)
         encoded = Conv2D(16, (5, 5), activation='relu', padding='same')(input_img)
         encoded = MaxPooling2D((POOL_SIZE, POOL_SIZE), padding='same')(encoded)
@@ -152,7 +153,8 @@ class SymbolAutoencoder():
                     new_type_idx = len(repr_entity_activations) - 1
                     e_type = 'type' + str(new_type_idx)
 
-            min_coords, max_coords = entity_coords-NEIGHBOR_RADIUS, entity_coords+NEIGHBOR_RADIUS
+            min_coords = entity_coords-self.neighbor_radius
+            max_coords = entity_coords+self.neighbor_radius
             n_neighbors = np.count_nonzero(pos_map[min_coords[0]:max_coords[0],
                                                    min_coords[1]:max_coords[1]])
             typed_entities.append(Entity(position=entity_coords,
@@ -164,9 +166,12 @@ class SymbolAutoencoder():
         return typed_entities, found_types
 
     @staticmethod
-    def from_saved(filename, input_shape):
+    def from_saved(filename, input_shape, neighbor_radius=None):
         '''Load autoencoder weights from filename, given input shape'''
-        ret = SymbolAutoencoder(input_shape)
+        if neighbor_radius is not None:
+            ret = SymbolAutoencoder(input_shape, neighbor_radius=neighbor_radius)
+        else:
+            ret = SymbolAutoencoder(input_shape)
         ret.autoencoder.load_weights(filename)
         return ret
 
@@ -183,13 +188,13 @@ class Entity():
         self.last_transition = None
         self.neighbors = n_neighbors
         # Used for calculating interactions
-        self.prev_state = {'position': self.position, 'type': self.entity_type}
+        self.prev_state = {'position': self.position, 'entity_type': self.entity_type}
         # Used for marking entities for deletion
         self.exists = 1
 
     def update_self(self, entity):
         '''Update own params based on new entity object'''
-        self.prev_state = {'position': self.position, 'type': self.entity_type}
+        self.prev_state = {'position': self.position, 'entity_type': self.entity_type}
         self.position = entity.position
         self._transition(self.entity_type, entity.entity_type)
 

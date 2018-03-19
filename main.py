@@ -14,7 +14,7 @@ import cross_circle_gym
 #pylint:enable=W0611
 from components.autoencoder import SymbolAutoencoder
 from components.state_builder import StateRepresentationBuilder
-from components.agent import DQNAgent, DDQNAgent
+from components.agent import TabularAgent #, DDQNAgent
 
 parser = argparse.ArgumentParser(description=None)
 parser.add_argument('env_id', nargs='?', default='CrossCircle-MixedRand-v0',
@@ -34,6 +34,8 @@ parser.add_argument('--save', type=str, help='save model to filename provided')
 args = parser.parse_args()
 
 TRAIN_IMAGES_FILE = 'train_images.pkl'
+NEIGHBOR_RADIUS = 25  # 1/2 side of square in which to search for neighbors
+
 # You can set the level to logger.DEBUG or logger.WARN if you
 # want to change the amount of output.
 logger.set_level(logger.INFO)
@@ -66,64 +68,73 @@ else:
 
 input_shape = images[0].shape + (1,)
 if args.load:
-    autoencoder = SymbolAutoencoder.from_saved(args.load, input_shape)
+    autoencoder = SymbolAutoencoder.from_saved(args.load,
+                                               input_shape,
+                                               neighbor_radius=NEIGHBOR_RADIUS)
 else:
-    autoencoder = SymbolAutoencoder(input_shape)
+    autoencoder = SymbolAutoencoder(input_shape, neighbor_radius=NEIGHBOR_RADIUS)
 
-logger.info('Splitting sets...')
-X_train, X_test = train_test_split(images, test_size=0.2, random_state=seed)
-X_train, X_val = train_test_split(X_train, test_size=0.2, random_state=seed)
+if args.load_train or args.visualize or not args.load:
+    logger.info('Splitting sets...')
+    X_train, X_test = train_test_split(images, test_size=0.2, random_state=seed)
+    X_train, X_val = train_test_split(X_train, test_size=0.2, random_state=seed)
 
-X_train = np.reshape(X_train, (len(X_train),) + X_train[0].shape + (1,))
-X_test = np.reshape(X_test, (len(X_test),) + X_test[0].shape + (1,))
-X_val = np.reshape(X_val, (len(X_val),) + X_val[0].shape + (1,))
+    X_train = np.reshape(X_train, (len(X_train),) + input_shape)
+    X_test = np.reshape(X_test, (len(X_test),) + input_shape)
+    X_val = np.reshape(X_val, (len(X_val),) + input_shape)
 
-if args.load_train or not args.load:
-    logger.info('Training...')
-    autoencoder.train(X_train, epochs=10, validation=X_val)
+    if args.load_train or not args.load:
+        logger.info('Training...')
+        autoencoder.train(X_train, epochs=10, validation=X_val)
+
+    if args.visualize:
+        #Visualize autoencoder
+        vis_imgs = X_test[:10]
+        autoencoder.visualize(vis_imgs)
+
 if args.save:
     autoencoder.save_weights(args.save)
 
-if args.visualize:
-    #Visualize autoencoder
-    vis_imgs = X_test[:10]
-    autoencoder.visualize(vis_imgs)
 
-entities, found_types = autoencoder.get_entities(X_test[0])
-print(entities)
+# entities, found_types = autoencoder.get_entities(X_test[0])
 
 state_builder = StateRepresentationBuilder()
-state = state_builder.build_state(entities, found_types)
-print(state)
+# state = state_builder.build_state(entities, found_types)
+# print(state)
 
 # state_size = None # TODO
-# action_size = env.action_space.n
+action_size = env.action_space.n
 # if args.enhancements:
 #     agent = DDQNAgent(state_size, action_size)
 # else:
-#     agent = DQNAgent(state_size, action_size)
+agent = TabularAgent(action_size)
 # # agent.load('./save/cartpole-ddqn.h5')
-# done = False
-# batch_size = 32
-# time_steps = 100
+done = False
+batch_size = 32
+time_steps = 100
 
-# for e in range(args.episodes):
-#     state = env.reset()
-#     state = np.reshape(state, [1, state_size])
-#     for time in range(time_steps):
-#         env.render()
-#         action = agent.act(state)
-#         next_state, reward, done, _ = env.step(action)
-#         next_state = np.reshape(next_state, [1, state_size])
-#         agent.remember(state, action, reward, next_state, done)
-#         state = next_state
-#         if done or time == time_steps-1:
-#             if args.enhancements:
-#                 agent.update_target_model()
-#             print('episode: {}/{}, score: {}, e: {:.2}'
-#                   .format(e, args.episodes, time, agent.epsilon))
-#             break
-#     if len(agent.memory) > batch_size:
-#         agent.replay(batch_size)
-#     if e % 10 == 0:
-#         agent.save('dqn_agent.h5')
+for e in range(args.episodes):
+    state_builder.restart()
+    state = env.reset()
+    state = np.reshape(state, input_shape)
+    state = state_builder.build_state(*autoencoder.get_entities(state))
+    for time in range(time_steps):
+        env.render(wait=0.25)
+        action = agent.act(state)
+        next_state, reward, done, _ = env.step(action)
+        next_state = np.reshape(next_state, input_shape)
+        next_state = state_builder.build_state(*autoencoder.get_entities(next_state))
+        # next_state = np.reshape(next_state, [1, state_size])
+        agent.update(state, action, reward, next_state, done)
+        state = next_state
+        if done:
+            break
+    # if args.enhancements:
+    #     agent.update_target_model()
+    print('episode: {}/{}, e: {:.2}'
+          .format(e, args.episodes, agent.epsilon))
+
+    # if len(agent.memory) > batch_size:
+    #     agent.replay(batch_size)
+    if e % 10 == 0:
+        agent.save('tab_agent.h5')

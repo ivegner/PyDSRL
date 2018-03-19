@@ -17,7 +17,6 @@ class CrossCircleBase(gym.Env):
     def __init__(self):
         self.field_dim = 100
         self.entity_size = 5
-        self.render_wait = 1
         self.num_entities = 16
 
         self.action_space = spaces.Discrete(4)
@@ -129,12 +128,12 @@ class CrossCircleBase(gym.Env):
             self.entities[entity_type].append(
                 {'center': center, 'top_left': top_left})
 
-    def render(self, mode='human'):
+    def render(self, wait=1, mode='human'):
         plt.ion()
         if self.viewer is None:
             self.viewer = plt.imshow(self.combined_state)
         self.viewer.set_data(self.combined_state)
-        plt.pause(self.render_wait)
+        plt.pause(wait)
 
     def seed(self, seed=None):
         self.np_random, seed = seeding.np_random(seed)
@@ -263,22 +262,30 @@ class CrossCircleBase(gym.Env):
         #     print('self._get_state_window({}, {})[{}]'.format(pixel_coords-(self.entity_size, self.entity_size),
         #                                                       2*self.entity_size, entity_type))
         views = conv2d(layer_window, (self.entity_size, self.entity_size))
+        __last_sum_map = None # debug
         for top_left_x, row in enumerate(views):
             for top_left_y, view in enumerate(row):
                 # try to match shape against window that originates in top_left_x, top_left_y]
                 shape = self._make_shape(entity_type)
                 sum_map = np.add(view, shape)
+                __last_sum_map = sum_map
                 for coords, val in np.ndenumerate(shape):
                     if val == 1 and sum_map[coords] == 1:
                         # not full match of shape because not superimposed fully
                         break
                 else:
-                    if sum_map[(self.entity_size-top_left_x-off_the_edge, self.entity_size-top_left_y-off_the_edge)] == 2:
-                        # original pixel coords are at the center, i.e. (self.entity_size, self.entity_size)
-                        # If they're matched, shape is found
-                        # Return global coordinates of matched top left coordinates
-                        return np.add((top_left_x, top_left_y), window_top_left, dtype=np.int32)
+                    # print('matched')
+                    # if sum_map[(self.entity_size-top_left_x-off_the_edge, self.entity_size-top_left_y-off_the_edge)] == 2:
+                    #     # original pixel coords are at the center, i.e. (self.entity_size, self.entity_size)
+                    #     # If they're matched, shape is found
+                    #     # Return global coordinates of matched top left coordinates
+                    return np.add((top_left_x, top_left_y), window_top_left, dtype=np.int8)
         plt.savefig('unmatched_debug.png')
+        np.set_printoptions(threshold=np.inf)
+        print('Layer window:')
+        print(layer_window)
+        print('Last-seen sum_map:')
+        print(__last_sum_map)
         raise Exception('Unmatched collision. You should never see this message.\n\
                          Coords: {}, shape: {}'.format(pixel_coords, entity_type))
 
@@ -289,7 +296,7 @@ def conv2d(arr, sub_shape):
     '''convolve sub_shape over arr'''
     view_shape = tuple(np.subtract(arr.shape, sub_shape)+1) + sub_shape
     try:
-        arr_view = as_strided(arr, (view_shape), arr.strides * 2, writeable=False)
+        arr_view = as_strided(arr, (view_shape), arr.strides * 2)
     except Exception as exc:
         print('arr: ', arr, 'sub: ', sub_shape)
         print(exc)
