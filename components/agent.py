@@ -98,7 +98,9 @@ class TabularAgent:
     '''RL agent as described in the DSRL paper'''
     def __init__(self, action_size, neighbor_radius=25):
         self.action_size = action_size
-        self.epsilon = 0.1
+        self.epsilon = 1
+        self.epsilon_decay = 0.999
+        self.epsilon_min = 0.1
         self.gamma = 0.95
         self.neighbor_radius=neighbor_radius
         self.tables = {}
@@ -111,11 +113,21 @@ class TabularAgent:
         Returns: action to take, chosen e-greedily
         '''
         if np.random.rand() <= self.epsilon:
+            print('random action, e:', self.epsilon)
             return random.randrange(self.action_size)
+
+        if self.epsilon > self.epsilon_min:
+            self.epsilon *= self.epsilon_decay
+
         return np.argmax(self._total_rewards(state))  # returns action
 
     def update(self, state, action, reward, next_state, done):
         '''Update tables based on reward and action taken'''
+        curr_tr = self._total_rewards(state)
+        next_tr = self._total_rewards(next_state)
+        print('Reward for action {}: {}. Current total rewards: {}'.format(action, reward, curr_tr))
+        print('Next Total Reward:', next_tr)
+
         for interaction in state:
             type_1, type_2 = interaction['types_after'] # TODO resolve: should this too be types_before?
             table = self.tables.setdefault(type_1, {}).setdefault(type_2, self._make_table())
@@ -123,8 +135,8 @@ class TabularAgent:
             if done:
                 table[interaction['loc_difference']][action] = reward
             else:
-                a = self._total_rewards(next_state)
-                table[interaction['loc_difference']][action] = reward + self.gamma * np.max(a)
+                table[interaction['loc_difference']][action] = \
+                    reward + self.gamma * (np.max(next_tr) - curr_tr[action])
 
     def _total_rewards(self, interactions):
         action_rewards = np.zeros(self.action_size)

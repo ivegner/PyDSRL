@@ -186,7 +186,7 @@ class Entity():
         self.entity_type = entity_type
         self.id = tracking_id
         self.last_transition = None
-        self.neighbors = n_neighbors
+        self.n_neighbors = n_neighbors
         # Used for calculating interactions
         self.prev_state = {'position': self.position, 'entity_type': self.entity_type}
         # Used for marking entities for deletion

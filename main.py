@@ -43,7 +43,7 @@ logger.set_level(logger.INFO)
 
 
 env = gym.make(args.env_id)
-seed = env.seed(0)[0]
+seed = env.seed(1)[0]
 
 
 
@@ -119,7 +119,7 @@ for e in range(args.episodes):
     state = np.reshape(state, input_shape)
     state = state_builder.build_state(*autoencoder.get_entities(state))
     for time in range(time_steps):
-        env.render(wait=0.25)
+        env.render(wait=1)
         action = agent.act(state)
         next_state, reward, done, _ = env.step(action)
         next_state = np.reshape(next_state, input_shape)
