@@ -1,12 +1,63 @@
 '''Base class for the DSRL paper toy game'''
-import math
-
 import gym
-from gym import spaces, logger
+from gym import spaces
 from gym.utils import seeding
 import numpy as np
-from numpy.lib.stride_tricks import as_strided
 from matplotlib import pyplot as plt
+from matplotlib.colors import to_rgb
+import imageio
+import os
+from skimage.transform import resize
+
+
+class Entity(object):
+    def __init__(self, y, x, h, w, kind, center=False, z=None):
+        if center:
+            self.top = y - h / 2
+            self.left = x - w / 2
+        else:
+            self.top = y
+            self.left = x
+
+        self.h = h
+        self.w = w
+        self.alive = True
+        self.z = np.random.rand() if z is None else z
+        self.kind = kind
+
+    @property
+    def right(self):
+        return self.left + self.w
+
+    @property
+    def bottom(self):
+        return self.top + self.h
+
+    def intersects(self, r2):
+        return self.overlap_area(r2) > 0
+
+    def overlap_area(self, r2):
+        overlap_bottom = np.minimum(self.bottom, r2.bottom)
+        overlap_top = np.maximum(self.top, r2.top)
+
+        overlap_right = np.minimum(self.right, r2.right)
+        overlap_left = np.maximum(self.left, r2.left)
+
+        area = np.maximum(overlap_bottom - overlap_top, 0) * np.maximum(overlap_right - overlap_left, 0)
+        return area
+
+    def centre(self):
+        return (
+            self.top + self.h / 2.,
+            self.left + self.w / 2.
+        )
+
+    def __str__(self):
+        return "<{}:{} {}:{}, alive={}, z={}, kind={}>".format(self.top, self.bottom, self.left, self.right, self.alive, self.z, self.kind)
+
+    def __repr__(self):
+        return str(self)
+
 
 class CrossCircleBase(gym.Env):
     '''Base class for DSRL paper cross-circle game'''
@@ -14,20 +65,45 @@ class CrossCircleBase(gym.Env):
         'render.modes': ['human'],
     }
 
-    def __init__(self):
-        self.field_dim = 100
-        self.entity_size = 5
-        self.num_entities = 16
+    def __init__(
+            self, field_dim=100, background_colour='white', shape_colours="red blue white",
+            entity_size=10, n_entities=40, max_overlap=400, overlap_factor=0.5):
+        self.field_dim = field_dim
+        self.background_colour = background_colour
+        self.shape_colours = shape_colours
+        self.entity_size = entity_size
+        self.n_entities = n_entities
+        self.max_overlap = max_overlap
+        self.overlap_factor = overlap_factor
 
         self.action_space = spaces.Discrete(4)
-        self.observation_space = spaces.Box(0, 1, shape=(self.field_dim, self.field_dim), dtype='f')
+        self.observation_space = spaces.Box(0, 1, shape=(self.field_dim, self.field_dim, 3))
         self.reward_range = (-1, 1)
-        self.state = {'circle': np.zeros((self.field_dim, self.field_dim)),
-                      'cross': np.zeros((self.field_dim, self.field_dim)),
-                      'agent': np.zeros((self.field_dim, self.field_dim))
-                     }
+
         self.entities = {'cross': [], 'circle': []}
-        self.agent = {'center': None, 'top_left': None}
+        self.agent = None
+
+        self.masks = {}
+        for entity_type in 'circle cross agent'.split():
+            f = os.path.join(os.path.dirname(__file__), "images", "{}.png".format(entity_type))
+            mask = imageio.imread(f)
+            mask = resize(mask, (self.entity_size, self.entity_size), mode='edge', preserve_range=True)
+            self.masks[entity_type] = np.tile(mask[..., 3:], (1, 1, 3)) / 255.
+
+        self.background_colour = None
+        if background_colour:
+            colour = to_rgb(background_colour)
+            colour = np.array(colour)[None, None, :]
+            self.background_colour = colour
+
+        self.shape_colours = None
+        if shape_colours:
+            if isinstance(shape_colours, str):
+                shape_colours = shape_colours.split()
+
+            self.shape_colours = {
+                entity_type: np.array(to_rgb(c))[None, None, :]
+                for entity_type, c in zip(sorted("agent circle cross".split()), shape_colours)}
 
         self.seed()
         self.reset()
@@ -36,11 +112,36 @@ class CrossCircleBase(gym.Env):
     @property
     def combined_state(self):
         '''Add state layers into one array'''
-        return np.clip(
-            np.add(np.add(self.state['circle'], self.state['cross']), self.state['agent']), 0, 1)
+        image = np.zeros((self.field_dim, self.field_dim, 3)) * self.background_colour
+
+        all_entities = []
+        for entity_type, entities in self.entities.items():
+            all_entities.extend(entities)
+        all_entities.append(self.agent)
+
+        all_entities = sorted(all_entities, key=lambda x: x.z)
+
+        for entity in all_entities:
+            if not entity.alive:
+                continue
+
+            _alpha = self.masks[entity.kind]
+            if self.shape_colours is None:
+                _image = np.random.rand(self.entity_size, self.entity_size, 3)
+            else:
+                _image = np.tile(self.shape_colours[entity.kind], (self.entity_size, self.entity_size, 1))
+
+            top = int(entity.top)
+            bottom = top + int(entity.h)
+
+            left = int(entity.left)
+            right = left + int(entity.w)
+
+            image[top:bottom, left:right, ...] = _alpha * _image + (1 - _alpha) * image[top:bottom, left:right, ...]
+
+        return image
 
     def step(self, action):
-
         # every move is 1/2 the agent's size
         action_type = ACTION_LOOKUP[action]
         step_size = self.entity_size/2 + self.entity_size % 2
@@ -54,13 +155,7 @@ class CrossCircleBase(gym.Env):
         if action_type == 'RIGHT':
             collision = self._move_agent(step_size, 0)
 
-        if collision is not None:
-            if collision == 'circle':
-                reward = -1
-            elif collision == 'cross':
-                reward = 1
-        else:
-            reward = 0
+        reward = collision['cross'] - collision['circle']
 
         info = {'entities': self.entities, 'agent': self.agent}
         return self.combined_state, reward, False, info
@@ -68,11 +163,7 @@ class CrossCircleBase(gym.Env):
     def reset(self):
         '''Clear entities and state, call setup_field()'''
         self.entities = {'cross': [], 'circle': []}
-        self.agent = {'center': None, 'top_left': None}
-        self.state = {'circle': np.zeros((self.field_dim, self.field_dim)),
-                      'cross': np.zeros((self.field_dim, self.field_dim)),
-                      'agent': np.zeros((self.field_dim, self.field_dim))
-                     }
+        self.agent = None
         self.setup_field()
         return self.combined_state
 
@@ -80,55 +171,93 @@ class CrossCircleBase(gym.Env):
         '''Calls layout. Meant as a chance for subclasses to alter layout() call'''
         raise NotImplementedError('Needs to be implemented in subclasses')
 
-    def layout(self, random=True, mixed=True, num_entities=None, random_agent=False):
+    def layout(self, random=True, mixed=True, n_entities=None, random_agent=False):
         '''Sets up agent, crosses and circles on field. DOES NOT CLEAR FIELD.'''
-        if num_entities is None:
-            num_entities = self.num_entities
+        if n_entities is None:
+            n_entities = self.n_entities
+
         if random_agent:
-            self.agent['center'] = np.random.randint(self.entity_size/2,
-                                                     self.field_dim-self.entity_size/2,
-                                                     size=(2,))
-            self.agent['top_left'] = self._round_int_ndarray(self.agent['center'] - self.entity_size/2)
+            top_left = np.random.randint(self.field_dim-self.entity_size, size=(2,))
+            self.agent = Entity(top_left[0], top_left[1], self.entity_size, self.entity_size, kind="agent")
         else:
-            self.agent['center'] = self._round_int_ndarray((self.field_dim/2, self.field_dim/2))
-            self.agent['top_left'] = self._round_int_ndarray(self.agent['center'] - self.entity_size/2)
-        self._draw_entity(self.agent['top_left'], 'agent')
+            self.agent = Entity(
+                self.field_dim/2, self.field_dim/2, self.entity_size, self.entity_size, kind="agent", center=True)
 
-        if not random:
-            num_per_row = round(math.sqrt(num_entities))
-            entity_spacing = (self.field_dim/num_per_row - self.entity_size)/2
-            def _get_next_coords(mixed):
-                '''Generator for grid alignment'''
-                last_grid_position = np.array([entity_spacing, entity_spacing])
-                entity_type = 'circle'
-                for _ in range(num_entities):
-                    for __ in range(num_per_row):
-                        # return center, top left
-                        if mixed:
-                            entity_type = 'cross' if entity_type == 'circle' else 'circle'
-                        yield self._round_int_ndarray(last_grid_position + self.entity_size/2), \
-                              self._round_int_ndarray(last_grid_position), entity_type
+        if random:
+            sub_image_shapes = [(self.entity_size, self.entity_size) for i in range(n_entities)]
+            entities = self._sample_entities(sub_image_shapes, self.max_overlap)
 
-                        last_grid_position += (0, 2*entity_spacing + self.entity_size)
-                    # new row
-                    last_grid_position[:] = [last_grid_position[0]+2*entity_spacing+self.entity_size, entity_spacing]
-                    entity_type = 'cross' if entity_type == 'circle' else 'circle'  # checkerboard
-            grid_gen = _get_next_coords(mixed)
-
-        for idx in range(num_entities):
-            if random:
-                if mixed and idx % 2 == 0:
+            for i, e in enumerate(entities):
+                if mixed and i % 2 == 0:
                     entity_type = 'cross'
                 else:
                     entity_type = 'circle'
-                center, top_left = self._get_random_entity_coords(entity_type)
-            else:
-                center, top_left, entity_type = next(grid_gen)
-            self._draw_entity(top_left, entity_type)
-            self.entities[entity_type].append(
-                {'center': center, 'top_left': top_left})
+                e.kind = entity_type
+                self.entities[entity_type].append(e)
+        else:
+            n_per_row = int(round(np.sqrt(n_entities)))
+            n_entities = n_per_row ** 2
+            center_spacing = self.field_dim / n_per_row
+            row_start_entity_type = 'circle'
 
-    def render(self, wait=1, mode='human'):
+            for i in range(n_per_row):
+                entity_type = row_start_entity_type
+                for j in range(n_per_row):
+                    y = center_spacing / 2 + center_spacing * i
+                    x = center_spacing / 2 + center_spacing * j
+
+                    entity = Entity(y, x, self.entity_size, self.entity_size, center=True, kind=entity_type)
+
+                    self.entities[entity_type].append(entity)
+
+                    if mixed:
+                        entity_type = 'cross' if entity_type == 'circle' else 'circle'
+
+                if mixed:
+                    row_start_entity_type = 'cross' if row_start_entity_type == 'circle' else 'circle'
+
+    def _sample_entities(self, sub_image_shapes, max_overlap=None, size_std=None):
+        if not sub_image_shapes:
+            return []
+
+        sub_image_shapes = np.array(sub_image_shapes)
+        n_entities = len(sub_image_shapes)
+        i = 0
+        while True:
+            if size_std is None:
+                shape_multipliers = 1.
+            else:
+                shape_multipliers = np.maximum(np.random.randn(n_entities, 2) * size_std + 1.0, 0.5)
+
+            _sub_image_shapes = np.ceil(shape_multipliers * sub_image_shapes[:, :2]).astype('i')
+
+            entities = [
+                Entity(
+                    np.random.randint(self.field_dim-m+1),
+                    np.random.randint(self.field_dim-n+1),
+                    m, n, kind=None)
+                for m, n in _sub_image_shapes]
+            area = np.zeros((self.field_dim, self.field_dim), 'uint8')
+
+            for entity in entities:
+                top = int(entity.top)
+                left = int(entity.left)
+
+                area[top:top + int(entity.h), left:left + int(entity.w)] += 1
+
+            if max_overlap is None or (area[area >= 2]-1).sum() < max_overlap:
+                break
+
+            i += 1
+
+            if i > 100000:
+                raise Exception(
+                    "Could not fit entityangles. "
+                    "(n_entities: {}, field_dim: {}, max_overlap: {})".format(
+                        n_entities, self.field_dim, max_overlap))
+        return entities
+
+    def render(self, wait=1, mode='human', close=False):
         plt.ion()
         if self.viewer is None:
             self.viewer = plt.imshow(self.combined_state)
@@ -140,169 +269,37 @@ class CrossCircleBase(gym.Env):
         return [seed]
 
     def _make_shape(self, entity_type):
-        '''Types: circle/cross/agent. -9 is invisible padding'''
-        if self.entity_size != 5:
-            raise Exception('Only entity size supported right now is 5x5')
-
-        if entity_type == 'circle':
-            # pylint:disable=C0326
-            return np.array([
-                [-9,  1,  1,  1, -9],
-                [ 1, -9, -9, -9,  1],
-                [ 1, -9, -9, -9,  1],
-                [ 1, -9, -9, -9,  1],
-                [-9,  1,  1,  1, -9]
-            ])
-        elif entity_type == 'cross':
-            return np.array([
-                [ 1, -9, -9, -9,  1],
-                [-9,  1, -9,  1, -9],
-                [-9, -9,  1, -9, -9],
-                [-9,  1, -9,  1, -9],
-                [ 1, -9, -9, -9,  1]
-            ])
-        elif entity_type == 'agent':
-            return np.array([
-                [-9, -9,  1, -9, -9],
-                [-9, -9,  1, -9, -9],
-                [ 1,  1,  1,  1,  1],
-                [-9, -9,  1, -9, -9],
-                [-9, -9,  1, -9, -9]
-            ])
-        # pylint:enable=C0326
-
-    def _draw_entity(self, top_left, entity_type):
-        window = self._get_state_window(top_left)[entity_type]
-        scene = np.add(window, self._make_shape(entity_type))
-        window[:, :] = scene
-
-    def _undraw_entity(self, top_left, entity_type):
-        window = self._get_state_window(top_left)[entity_type]
-        window[:, :] = np.subtract(
-            window, self._make_shape(entity_type))
-
-    def _get_random_entity_coords(self, entity_type):
-        '''Returns tuple of ([center_x, center_y], [top_left_x, top_left_y])'''
-        shape = self._make_shape(entity_type)
-
-        center = self.np_random.randint(
-            self.entity_size/2, self.field_dim-self.entity_size/2, (2,))
-        top_left = self._round_int_ndarray(center - self.entity_size/2)
-
-        if self._detect_collision(top_left, shape) is not None:
-            # spot's taken, find a new one
-            center, top_left = self._get_random_entity_coords(entity_type)
-
-        return center, top_left
-
-    def _detect_collision(self, top_left, shape):
-        window = self._get_state_window(top_left)
-        # check across all layers
-        for layer, layer_state in window.items():
-            sum_map = np.add(layer_state, shape).astype(int)
-            for (sum_x, sum_y), val in np.ndenumerate(sum_map):
-                # if there's a 2, there are 2 1's on top of each other = collision
-                if val == 2 or val == -8 or val==-18:   # 2 = visible collision, -8 or -18 = invisible/padding collision
-                    return layer, self._round_int_ndarray((top_left[0] + sum_x, top_left[1] + sum_y))
-        return None
-
-    def _get_state_window(self, top_left, size=None):
-        if size is None:
-            size = self.entity_size
-
-        window = {}
-        for layer in ['circle', 'cross', 'agent']:
-            window[layer] = self.state[layer][top_left[0]:top_left[0]+size,
-                                              top_left[1]:top_left[1]+size]
-        return window
+        return self.masks[entity_type]
 
     def _move_agent(self, x_step, y_step):
         '''Returns type of colliding object if collided'''
-        new_agent_x = self.agent['top_left'][0] + x_step
-        new_agent_y = self.agent['top_left'][1] + y_step
-        new_agent_center = self._round_int_ndarray(self.agent['center'] + (x_step, y_step))
+        agent = self.agent
 
-        # If collides with wall, do not move
-        if (not 0 <= new_agent_x <= self.field_dim - self.entity_size or
-                not 0 <= new_agent_y <= self.field_dim - self.entity_size):
-            logger.debug('agent hit wall')
+        new_x = agent.left + x_step
+        new_y = agent.top + y_step
+
+        wall_collision = (
+            new_x + agent.w > self.field_dim or
+            new_x < 0 or
+            new_y + agent.h > self.field_dim or
+            new_y < 0
+        )
+
+        if wall_collision:
             return
 
-        new_top_left = self._round_int_ndarray((new_agent_x, new_agent_y))
-        # Remove current agent representation
-        self._undraw_entity(self.agent['top_left'], 'agent')
+        agent.left = new_x
+        agent.top = new_y
 
-        collision = self._detect_collision(
-            new_top_left, self._make_shape('agent'))
-        if collision is not None:
-            collision_type, collision_pixel_coords = collision
-            collision_top_left = self._find_entity_by_pixel(
-                collision_pixel_coords, collision_type)
-            self._undraw_entity(collision_top_left, collision_type)
+        collisions = {entity_type: 0 for entity_type in self.entities}
 
-        self._draw_entity(new_top_left, 'agent')
-        self.agent = {'top_left': new_top_left, 'center': new_agent_center}
-        return collision[0] if collision is not None else None
+        for entity_type, entities in self.entities.items():
+            for i, entity in enumerate(entities):
+                if agent.overlap_area(entity) > self.overlap_factor * (self.entity_size ** 2):
+                    collisions[entity_type] += 1
+                    entity.alive = False
 
-    def _find_entity_by_pixel(self, pixel_coords, entity_type):
-        '''Match shape in window so that pixel_coords is in the shape'''
-        window_top_left = pixel_coords-(self.entity_size, self.entity_size)
-        off_the_edge = window_top_left[np.where(window_top_left < 0)]
-        if off_the_edge:
-            off_the_edge = abs(np.min(off_the_edge))
-            window_top_left += off_the_edge
-            # print(window_top_left, self._get_state_window(window_top_left, 2*self.entity_size)[entity_type])
-        else:
-            off_the_edge = 0
-        layer_window = self._get_state_window(window_top_left, 2*self.entity_size)[entity_type]
-
-        # if not layer_window.any():
-        #     plt.savefig('unmatched_debug.png')
-        #     print('pixel coords: ', pixel_coords)
-        #     print('self._get_state_window({}, {})[{}]'.format(pixel_coords-(self.entity_size, self.entity_size),
-        #                                                       2*self.entity_size, entity_type))
-        views = conv2d(layer_window, (self.entity_size, self.entity_size))
-        __last_sum_map = None # debug
-        for top_left_x, row in enumerate(views):
-            for top_left_y, view in enumerate(row):
-                # try to match shape against window that originates in top_left_x, top_left_y]
-                shape = self._make_shape(entity_type)
-                sum_map = np.add(view, shape)
-                __last_sum_map = sum_map
-                for coords, val in np.ndenumerate(shape):
-                    if val == 1 and sum_map[coords] == 1:
-                        # not full match of shape because not superimposed fully
-                        break
-                else:
-                    # print('matched')
-                    # if sum_map[(self.entity_size-top_left_x-off_the_edge, self.entity_size-top_left_y-off_the_edge)] == 2:
-                    #     # original pixel coords are at the center, i.e. (self.entity_size, self.entity_size)
-                    #     # If they're matched, shape is found
-                    #     # Return global coordinates of matched top left coordinates
-                    return np.add((top_left_x, top_left_y), window_top_left, dtype=np.int8)
-        plt.savefig('unmatched_debug.png')
-        np.set_printoptions(threshold=np.inf)
-        print('Layer window:')
-        print(layer_window)
-        print('Last-seen sum_map:')
-        print(__last_sum_map)
-        raise Exception('Unmatched collision. You should never see this message.\n\
-                         Coords: {}, shape: {}'.format(pixel_coords, entity_type))
-
-    def _round_int_ndarray(self, array_like):
-        return np.around(array_like).astype(int)
-
-def conv2d(arr, sub_shape):
-    '''convolve sub_shape over arr'''
-    view_shape = tuple(np.subtract(arr.shape, sub_shape)+1) + sub_shape
-    try:
-        arr_view = as_strided(arr, (view_shape), arr.strides * 2)
-    except Exception as exc:
-        print('arr: ', arr, 'sub: ', sub_shape)
-        print(exc)
-    # arr_view = arr_view.reshape((-1,) + sub_shape)
-
-    return arr_view
+        return collisions
 
 
 ACTION_LOOKUP = {
