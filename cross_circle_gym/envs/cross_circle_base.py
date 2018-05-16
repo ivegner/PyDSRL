@@ -66,15 +66,20 @@ class CrossCircleBase(gym.Env):
     }
 
     def __init__(
-            self, field_dim=100, background_colour='white', shape_colours="red blue white",
-            entity_size=10, n_entities=40, max_overlap=400, overlap_factor=0.5):
+            self, field_dim=100, background_colour='white', shape_colours="white white white",
+            entity_size=10, min_entities=25, max_entities=50, max_overlap_factor=0.2, overlap_factor=0.25, step_size=10):
+
         self.field_dim = field_dim
         self.background_colour = background_colour
         self.shape_colours = shape_colours
         self.entity_size = entity_size
-        self.n_entities = n_entities
-        self.max_overlap = max_overlap
+
+        self.min_entities = min_entities
+        self.max_entities = max_entities
+
+        self.max_overlap_factor = max_overlap_factor
         self.overlap_factor = overlap_factor
+        self.step_size = step_size
 
         self.action_space = spaces.Discrete(4)
         self.observation_space = spaces.Box(0, 1, shape=(self.field_dim, self.field_dim, 3))
@@ -142,9 +147,8 @@ class CrossCircleBase(gym.Env):
         return image
 
     def step(self, action):
-        # every move is 1/2 the agent's size
         action_type = ACTION_LOOKUP[action]
-        step_size = self.entity_size/2 + self.entity_size % 2
+        step_size = self.step_size if self.step_size is not None else (self.entity_size/2 + self.entity_size % 2)
 
         if action_type == 'UP':
             collision = self._move_agent(0, step_size)
@@ -171,10 +175,14 @@ class CrossCircleBase(gym.Env):
         '''Calls layout. Meant as a chance for subclasses to alter layout() call'''
         raise NotImplementedError('Needs to be implemented in subclasses')
 
-    def layout(self, random=True, mixed=True, n_entities=None, random_agent=False):
+    def layout(self, random=True, mixed=True, min_entities=None, max_entities=None, random_agent=False):
         '''Sets up agent, crosses and circles on field. DOES NOT CLEAR FIELD.'''
-        if n_entities is None:
-            n_entities = self.n_entities
+        if min_entities is None:
+            min_entities = self.min_entities
+        if max_entities is None:
+            max_entities = self.max_entities
+
+        n_entities = np.random.randint(min_entities, max_entities+1)
 
         if random_agent:
             top_left = np.random.randint(self.field_dim-self.entity_size, size=(2,))
@@ -185,7 +193,7 @@ class CrossCircleBase(gym.Env):
 
         if random:
             sub_image_shapes = [(self.entity_size, self.entity_size) for i in range(n_entities)]
-            entities = self._sample_entities(sub_image_shapes, self.max_overlap)
+            entities = self._sample_entities(sub_image_shapes, self.max_overlap_factor)
 
             for i, e in enumerate(entities):
                 if mixed and i % 2 == 0:
@@ -216,53 +224,62 @@ class CrossCircleBase(gym.Env):
                 if mixed:
                     row_start_entity_type = 'cross' if row_start_entity_type == 'circle' else 'circle'
 
-    def _sample_entities(self, sub_image_shapes, max_overlap=None, size_std=None):
-        if not sub_image_shapes:
+        # Clear objects that overlap with the agent originally
+        self._move_agent(0, 0)
+
+    def _sample_entities(self, patch_shapes, max_overlap_factor=None, size_std=None):
+        if len(patch_shapes) == 0:
             return []
 
-        sub_image_shapes = np.array(sub_image_shapes)
-        n_entities = len(sub_image_shapes)
-        i = 0
-        while True:
-            if size_std is None:
-                shape_multipliers = 1.
-            else:
-                shape_multipliers = np.maximum(np.random.randn(n_entities, 2) * size_std + 1.0, 0.5)
+        patch_shapes = np.array(patch_shapes)
+        n_rects = patch_shapes.shape[0]
 
-            _sub_image_shapes = np.ceil(shape_multipliers * sub_image_shapes[:, :2]).astype('i')
+        rects = []
 
-            entities = [
-                Entity(
-                    np.random.randint(self.field_dim-m+1),
-                    np.random.randint(self.field_dim-n+1),
-                    m, n, kind=None)
-                for m, n in _sub_image_shapes]
-            area = np.zeros((self.field_dim, self.field_dim), 'uint8')
+        for i in range(n_rects):
+            n_tries = 0
+            while True:
+                if size_std is None:
+                    shape_multipliers = 1.
+                else:
+                    shape_multipliers = np.maximum(np.random.randn(2) * size_std + 1.0, 0.5)
 
-            for entity in entities:
-                top = int(entity.top)
-                left = int(entity.left)
+                m, n = np.ceil(shape_multipliers * patch_shapes[i, :2]).astype('i')
 
-                area[top:top + int(entity.h), left:left + int(entity.w)] += 1
+                rect = Entity(
+                    np.random.randint(0, self.field_dim-m+1),
+                    np.random.randint(0, self.field_dim-n+1), m, n, kind=None)
 
-            if max_overlap is None or (area[area >= 2]-1).sum() < max_overlap:
-                break
+                if max_overlap_factor is None:
+                    rects.append(rect)
+                    break
+                else:
+                    violation = False
+                    for r in rects:
+                        if rect.overlap_area(r) / (self.entity_size**2) > max_overlap_factor:
+                            violation = True
+                            break
 
-            i += 1
+                    if not violation:
+                        rects.append(rect)
+                        break
 
-            if i > 100000:
-                raise Exception(
-                    "Could not fit entityangles. "
-                    "(n_entities: {}, field_dim: {}, max_overlap: {})".format(
-                        n_entities, self.field_dim, max_overlap))
-        return entities
+                n_tries += 1
 
-    def render(self, wait=1, mode='human', close=False):
+                if n_tries > 10000:
+                    raise Exception(
+                        "Could not fit rectangles. "
+                        "(n_rects: {}, field_dim: {}, max_overlap_factor: {})".format(
+                            n_rects, self.field_dim, max_overlap_factor))
+
+        return rects
+
+    def render(self, mode='human', close=False):
         plt.ion()
         if self.viewer is None:
             self.viewer = plt.imshow(self.combined_state)
         self.viewer.set_data(self.combined_state)
-        plt.pause(wait)
+        plt.pause(1)
 
     def seed(self, seed=None):
         self.np_random, seed = seeding.np_random(seed)
@@ -272,32 +289,42 @@ class CrossCircleBase(gym.Env):
         return self.masks[entity_type]
 
     def _move_agent(self, x_step, y_step):
-        '''Returns type of colliding object if collided'''
         agent = self.agent
-
-        new_x = agent.left + x_step
-        new_y = agent.top + y_step
-
-        wall_collision = (
-            new_x + agent.w > self.field_dim or
-            new_x < 0 or
-            new_y + agent.h > self.field_dim or
-            new_y < 0
-        )
-
-        if wall_collision:
-            return
-
-        agent.left = new_x
-        agent.top = new_y
-
         collisions = {entity_type: 0 for entity_type in self.entities}
 
         for entity_type, entities in self.entities.items():
             for i, entity in enumerate(entities):
-                if agent.overlap_area(entity) > self.overlap_factor * (self.entity_size ** 2):
+                if entity.alive and agent.overlap_area(entity) > self.overlap_factor * (self.entity_size ** 2):
                     collisions[entity_type] += 1
                     entity.alive = False
+
+        n_segments = 10
+
+        if not x_step and not y_step:
+            return collisions
+
+        for i in range(n_segments):
+            new_x = agent.left + x_step / n_segments
+            new_y = agent.top + y_step / n_segments
+
+            wall_collision = (
+                new_x + agent.w > self.field_dim or
+                new_x < 0 or
+                new_y + agent.h > self.field_dim or
+                new_y < 0
+            )
+
+            if wall_collision:
+                break
+            else:
+                agent.left = new_x
+                agent.top = new_y
+
+                for entity_type, entities in self.entities.items():
+                    for i, entity in enumerate(entities):
+                        if entity.alive and agent.overlap_area(entity) > self.overlap_factor * (self.entity_size ** 2):
+                            collisions[entity_type] += 1
+                            entity.alive = False
 
         return collisions
 
