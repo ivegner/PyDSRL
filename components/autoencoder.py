@@ -23,7 +23,8 @@ class SymbolAutoencoder():
         encoded = MaxPooling2D((POOL_SIZE, POOL_SIZE), padding='same')(encoded)
 
         decoded = UpSampling2D((POOL_SIZE, POOL_SIZE))(encoded)
-        decoded = Conv2D(1, (5, 5), activation='sigmoid', padding='same')(decoded)
+        # Get decoded number of channels, for now assume channels_last ordering
+        decoded = Conv2D(input_shape[2], (5, 5), activation='sigmoid', padding='same')(decoded)
 
         self.encoder = Model(input_img, encoded)
         self.autoencoder = Model(input_img, decoded)
