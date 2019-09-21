@@ -155,7 +155,9 @@ class SymbolAutoencoder():
                     e_type = 'type' + str(new_type_idx)
 
             min_coords = entity_coords-self.neighbor_radius
+            min_coords = np.maximum(min_coords, 0)
             max_coords = entity_coords+self.neighbor_radius
+            max_coords = np.minimum(max_coords, pos_map.shape)
             n_neighbors = np.count_nonzero(pos_map[min_coords[0]:max_coords[0],
                                                    min_coords[1]:max_coords[1]])
             typed_entities.append(Entity(position=entity_coords,
