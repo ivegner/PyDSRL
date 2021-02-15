@@ -1,7 +1,9 @@
 numpy
-gym[atari]==0.9.5
+gym
 sklearn
 scipy
 keras
 matplotlib
 pandas
+imageio
+scikit-image

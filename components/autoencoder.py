@@ -23,7 +23,9 @@ class SymbolAutoencoder():
         encoded = MaxPooling2D((POOL_SIZE, POOL_SIZE), padding='same')(encoded)
 
         decoded = UpSampling2D((POOL_SIZE, POOL_SIZE))(encoded)
-        decoded = Conv2D(1, (5, 5), activation='sigmoid', padding='same')(decoded)
+
+        # should this be 3? seems to work, but investigate. related to commented-out (1,) in main
+        decoded = Conv2D(3, (5, 5), activation='sigmoid', padding='same')(decoded)
 
         self.encoder = Model(input_img, encoded)
         self.autoencoder = Model(input_img, decoded)
@@ -36,6 +38,7 @@ class SymbolAutoencoder():
             print('''Make sure you started the Tensorboard server with
                      tensorboard --logdir=/tmp/autoencoder
                      Go to http://0.0.0.0:6006 to view Tensorboard''')
+
         self.autoencoder.fit(train_data, train_data,
                              epochs=epochs,
                              batch_size=batch_size,

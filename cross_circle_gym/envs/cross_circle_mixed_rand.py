@@ -18,6 +18,7 @@ class CrossCircleMixedRand(CrossCircleBase):
                      }
         self.layout(random=True,
                     mixed=True,
-                    num_entities=self.np_random.randint(min_entities, max_entities),
+                    min_entities=min_entities,
+                    max_entities=max_entities,
                     random_agent=True)
         return self.combined_state

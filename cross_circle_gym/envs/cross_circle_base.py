@@ -274,12 +274,12 @@ class CrossCircleBase(gym.Env):
 
         return rects
 
-    def render(self, mode='human', close=False):
+    def render(self, mode='human', close=False, wait=0):
         plt.ion()
         if self.viewer is None:
             self.viewer = plt.imshow(self.combined_state)
         self.viewer.set_data(self.combined_state)
-        plt.pause(1)
+        plt.pause(wait)
 
     def seed(self, seed=None):
         self.np_random, seed = seeding.np_random(seed)
