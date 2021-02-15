@@ -10,7 +10,7 @@ Confirmed to work with Python 3.8.5.
 pip install -r requirements.txt
 ```
 or
-``pip install -r requirements.freeze```
+```pip install -r requirements.freeze```
 
 Run with `python main.py`.
 
