@@ -66,22 +66,19 @@ else:
     with open(TRAIN_IMAGES_FILE, 'rb') as f:
         images = pickle.load(f)
 
-input_shape = images[0].shape# + (1,)
+#input_shape = images[0].shape + (1,)
+input_shape = images[0].shape
 if args.load:
     autoencoder = SymbolAutoencoder.from_saved(args.load,
-                                               input_shape,
+                                               images[0].shape,
                                                neighbor_radius=NEIGHBOR_RADIUS)
 else:
-    autoencoder = SymbolAutoencoder(input_shape, neighbor_radius=NEIGHBOR_RADIUS)
+    autoencoder = SymbolAutoencoder(images[0].shape, neighbor_radius=NEIGHBOR_RADIUS)
 
 if args.load_train or args.visualize or not args.load:
     logger.info('Splitting sets...')
     X_train, X_test = train_test_split(images, test_size=0.2, random_state=seed)
     X_train, X_val = train_test_split(X_train, test_size=0.2, random_state=seed)
-
-    X_train = np.reshape(X_train, (len(X_train),) + input_shape)
-    X_test = np.reshape(X_test, (len(X_test),) + input_shape)
-    X_val = np.reshape(X_val, (len(X_val),) + input_shape)
 
     if args.load_train or not args.load:
         logger.info('Training...')
@@ -119,7 +116,8 @@ for e in range(args.episodes):
     state = np.reshape(state, input_shape)
     state = state_builder.build_state(*autoencoder.get_entities(state))
     for time in range(time_steps):
-        env.render(wait=1)
+        #env.render(wait=1)
+        env.render()
         action = agent.act(state)
         next_state, reward, done, _ = env.step(action)
         next_state = np.reshape(next_state, input_shape)

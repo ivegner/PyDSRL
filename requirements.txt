@@ -7,3 +7,4 @@ matplotlib
 pandas
 imageio
 scikit-image
+tensorflow

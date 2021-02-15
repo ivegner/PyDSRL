@@ -23,9 +23,8 @@ class SymbolAutoencoder():
         encoded = MaxPooling2D((POOL_SIZE, POOL_SIZE), padding='same')(encoded)
 
         decoded = UpSampling2D((POOL_SIZE, POOL_SIZE))(encoded)
-
-        # should this be 3? seems to work, but investigate. related to commented-out (1,) in main
-        decoded = Conv2D(3, (5, 5), activation='sigmoid', padding='same')(decoded)
+        # Get decoded number of channels, for now assume channels_last ordering
+        decoded = Conv2D(input_shape[2], (5, 5), activation='sigmoid', padding='same')(decoded)
 
         self.encoder = Model(input_img, encoded)
         self.autoencoder = Model(input_img, decoded)
@@ -157,7 +156,9 @@ class SymbolAutoencoder():
                     e_type = 'type' + str(new_type_idx)
 
             min_coords = entity_coords-self.neighbor_radius
+            min_coords = np.maximum(min_coords, 0)
             max_coords = entity_coords+self.neighbor_radius
+            max_coords = np.minimum(max_coords, pos_map.shape)
             n_neighbors = np.count_nonzero(pos_map[min_coords[0]:max_coords[0],
                                                    min_coords[1]:max_coords[1]])
             typed_entities.append(Entity(position=entity_coords,
