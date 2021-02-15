@@ -82,7 +82,7 @@ if args.load_train or args.visualize or not args.load:
 
     if args.load_train or not args.load:
         logger.info('Training...')
-        autoencoder.train(X_train, epochs=1, validation=X_val)
+        autoencoder.train(X_train, epochs=10, validation=X_val)
 
     if args.visualize:
         #Visualize autoencoder
@@ -116,8 +116,7 @@ for e in range(args.episodes):
     state = np.reshape(state, input_shape)
     state = state_builder.build_state(*autoencoder.get_entities(state))
     for time in range(time_steps):
-        #env.render(wait=1)
-        env.render()
+        env.render(wait=1)
         action = agent.act(state)
         next_state, reward, done, _ = env.step(action)
         next_state = np.reshape(next_state, input_shape)
