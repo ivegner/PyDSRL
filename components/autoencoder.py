@@ -37,6 +37,7 @@ class SymbolAutoencoder():
             print('''Make sure you started the Tensorboard server with
                      tensorboard --logdir=/tmp/autoencoder
                      Go to http://0.0.0.0:6006 to view Tensorboard''')
+
         self.autoencoder.fit(train_data, train_data,
                              epochs=epochs,
                              batch_size=batch_size,

@@ -38,7 +38,7 @@ NEIGHBOR_RADIUS = 25  # 1/2 side of square in which to search for neighbors
 
 # You can set the level to logger.DEBUG or logger.WARN if you
 # want to change the amount of output.
-logger.set_level(logger.INFO)
+logger.setLevel(logger.INFO)
 
 
 
@@ -82,7 +82,7 @@ if args.load_train or args.visualize or not args.load:
 
     if args.load_train or not args.load:
         logger.info('Training...')
-        autoencoder.train(X_train, epochs=10, validation=X_val)
+        autoencoder.train(X_train, epochs=1, validation=X_val)
 
     if args.visualize:
         #Visualize autoencoder
