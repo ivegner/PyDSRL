@@ -1,13 +1,51 @@
-'''Base class for the DSRL paper toy game'''
+'''Base class for the DSRL paper toy game - adapted from the Lua environment here: https://github.com/Kaixhin/rlenvs/blob/master/rlenvs/XOWorld.lua'''
+
+
 import gym
 from gym import spaces
 from gym.utils import seeding
 import numpy as np
 from matplotlib import pyplot as plt
 from matplotlib.colors import to_rgb
-import imageio
-import os
 from skimage.transform import resize
+
+
+
+
+AGENT_MASK = np.expand_dims(np.array([[0, 0, 0, 1, 1, 1, 1, 0, 0, 0],
+                              [0, 0, 0, 1, 1, 1, 1, 0, 0, 0],
+                              [0, 0, 0, 1, 1, 1, 1, 0, 0, 0],
+                              [1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+                              [1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+                              [1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+                              [1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+                              [0, 0, 0, 1, 1, 1, 1, 0, 0, 0],
+                              [0, 0, 0, 1, 1, 1, 1, 0, 0, 0],
+                              [0, 0, 0, 1, 1, 1, 1, 0, 0, 0]]),axis=2)
+
+CROSS_MASK = np.expand_dims(np.array([[1, 1, 1, 1, 0, 0, 0, 1, 1, 1],
+                              [0, 1, 1, 1, 1, 0, 1, 1, 1, 1],
+                              [0, 0, 1, 1, 1, 1, 1, 1, 1, 0],
+                              [0, 0, 0, 1, 1, 1, 1, 1, 0, 0],
+                              [0, 0, 0, 1, 1, 1, 1, 1, 0, 0],
+                              [0, 0, 1, 1, 1, 1, 1, 1, 1, 0],
+                              [0, 1, 1, 1, 1, 0, 1, 1, 1, 1],
+                              [1, 1, 1, 1, 0, 0, 0, 1, 1, 1],
+                              [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                              [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]),axis=2)
+
+CIRCLE_MASK = np.expand_dims(np.array([[0, 0, 0, 1, 1, 1, 1, 1, 0, 0],
+                              [0, 0, 1, 1, 1, 1, 1, 1, 1, 0],
+                              [0, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+                              [1, 1, 1, 1, 0, 0, 0, 1, 1, 1],
+                              [1, 1, 1, 0, 0, 0, 0, 0, 1, 1],
+                              [1, 1, 1, 0, 0, 0, 0, 0, 1, 1],
+                              [1, 1, 1, 0, 0, 0, 0, 0, 1, 1],
+                              [1, 1, 1, 1, 0, 0, 0, 1, 1, 1],
+                              [0, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+                              [0, 0, 1, 1, 1, 1, 1, 1, 1, 0]]),axis=2)
+
+MASKS = {'circle':CIRCLE_MASK,'cross':CROSS_MASK,'agent':AGENT_MASK}
 
 
 class Entity(object):
@@ -66,13 +104,14 @@ class CrossCircleBase(gym.Env):
     }
 
     def __init__(
-            self, field_dim=100, background_colour='white', shape_colours="white white white",
-            entity_size=10, min_entities=25, max_entities=50, max_overlap_factor=0.2, overlap_factor=0.25, step_size=10):
+            self, field_dim=84, background_colour='white', shape_colours="white white white",
+            entity_size=10, min_entities=16, max_entities=16, max_overlap_factor=0.0, overlap_factor=0.2, step_size=1, color_state=False):
 
         self.field_dim = field_dim
         self.background_colour = background_colour
         self.shape_colours = shape_colours
         self.entity_size = entity_size
+        self.color_state = color_state
 
         self.min_entities = min_entities
         self.max_entities = max_entities
@@ -82,18 +121,19 @@ class CrossCircleBase(gym.Env):
         self.step_size = step_size
 
         self.action_space = spaces.Discrete(4)
-        self.observation_space = spaces.Box(0, 1, shape=(self.field_dim, self.field_dim, 3))
+        self.observation_space = spaces.Box(0, 1, shape=(self.field_dim, self.field_dim, 1))
         self.reward_range = (-1, 1)
 
         self.entities = {'cross': [], 'circle': []}
         self.agent = None
 
         self.masks = {}
+
         for entity_type in 'circle cross agent'.split():
-            f = os.path.join(os.path.dirname(__file__), "images", "{}.png".format(entity_type))
-            mask = imageio.imread(f)
+            mask = MASKS[entity_type]
             mask = resize(mask, (self.entity_size, self.entity_size), mode='edge', preserve_range=True)
-            self.masks[entity_type] = np.tile(mask[..., 3:], (1, 1, 3)) / 255.
+            self.masks[entity_type] = mask
+
 
         self.background_colour = None
         if background_colour:
@@ -117,7 +157,10 @@ class CrossCircleBase(gym.Env):
     @property
     def combined_state(self):
         '''Add state layers into one array'''
-        image = np.zeros((self.field_dim, self.field_dim, 3)) * self.background_colour
+        if self.color_state:
+            image = np.zeros((self.field_dim, self.field_dim, 3)) * self.background_colour
+        else:
+            image = np.zeros((self.field_dim, self.field_dim, 1))
 
         all_entities = []
         for entity_type, entities in self.entities.items():
@@ -131,10 +174,12 @@ class CrossCircleBase(gym.Env):
                 continue
 
             _alpha = self.masks[entity.kind]
-            if self.shape_colours is None:
-                _image = np.random.rand(self.entity_size, self.entity_size, 3)
-            else:
-                _image = np.tile(self.shape_colours[entity.kind], (self.entity_size, self.entity_size, 1))
+
+            if self.color_state:
+                if self.shape_colours is None:
+                    _image = np.random.rand(self.entity_size, self.entity_size, 3)
+                else:
+                    _image = np.tile(self.shape_colours[entity.kind], (self.entity_size, self.entity_size, 1))
 
             top = int(entity.top)
             bottom = top + int(entity.h)
@@ -142,7 +187,10 @@ class CrossCircleBase(gym.Env):
             left = int(entity.left)
             right = left + int(entity.w)
 
-            image[top:bottom, left:right, ...] = _alpha * _image + (1 - _alpha) * image[top:bottom, left:right, ...]
+            if self.color_state:
+                image[top:bottom, left:right, ...] = _alpha * _image + (1 - _alpha) * image[top:bottom, left:right, ...]
+            else:
+                image[top:bottom, left:right] = _alpha
 
         return image
 
@@ -193,7 +241,12 @@ class CrossCircleBase(gym.Env):
 
         if random:
             sub_image_shapes = [(self.entity_size, self.entity_size) for i in range(n_entities)]
+
+
             entities = self._sample_entities(sub_image_shapes, self.max_overlap_factor)
+
+            if entities==0:
+                return 0
 
             for i, e in enumerate(entities):
                 if mixed and i % 2 == 0:
@@ -237,40 +290,44 @@ class CrossCircleBase(gym.Env):
         rects = []
 
         for i in range(n_rects):
-            n_tries = 0
-            while True:
-                if size_std is None:
-                    shape_multipliers = 1.
-                else:
-                    shape_multipliers = np.maximum(np.random.randn(2) * size_std + 1.0, 0.5)
+            try:
+                n_tries = 0
+                while True:
+                    if size_std is None:
+                        shape_multipliers = 1.
+                    else:
+                        shape_multipliers = np.maximum(np.random.randn(2) * size_std + 1.0, 0.5)
 
-                m, n = np.ceil(shape_multipliers * patch_shapes[i, :2]).astype('i')
+                    m, n = np.ceil(shape_multipliers * patch_shapes[i, :2]).astype('i')
 
-                rect = Entity(
-                    np.random.randint(0, self.field_dim-m+1),
-                    np.random.randint(0, self.field_dim-n+1), m, n, kind=None)
+                    rect = Entity(
+                        np.random.randint(0, self.field_dim-m+1),
+                        np.random.randint(0, self.field_dim-n+1), m, n, kind=None)
 
-                if max_overlap_factor is None:
-                    rects.append(rect)
-                    break
-                else:
-                    violation = False
-                    for r in rects:
-                        if rect.overlap_area(r) / (self.entity_size**2) > max_overlap_factor:
-                            violation = True
-                            break
-
-                    if not violation:
+                    if max_overlap_factor is None:
                         rects.append(rect)
                         break
+                    else:
+                        violation = False
+                        for r in rects:
+                            if rect.overlap_area(r) / (self.entity_size**2) > max_overlap_factor:
+                                violation = True
+                                break
 
-                n_tries += 1
+                        if not violation:
+                            rects.append(rect)
+                            break
 
-                if n_tries > 10000:
-                    raise Exception(
-                        "Could not fit rectangles. "
-                        "(n_rects: {}, field_dim: {}, max_overlap_factor: {})".format(
-                            n_rects, self.field_dim, max_overlap_factor))
+                    n_tries += 1
+
+                    if n_tries > 10000:
+                        raise Exception(
+                            "Could not fit rectangles. "
+                            "(n_rects: {}, field_dim: {}, max_overlap_factor: {})".format(
+                                n_rects, self.field_dim, max_overlap_factor))
+            except:
+                return 0
+
 
         return rects
 

@@ -15,9 +15,12 @@ class StateRepresentationBuilder():
         self.do_not_exist = []  # entities to be removed as they no longer exist
         self.sim_weights = [2, 1, 1]
         self.neighbor_radius = neighbor_radius
+        self.offset = 0
 
     def build_state(self, entities, found_types):
         '''Tag entities across time, build interactions'''
+        #print(f'Entities found:')
+
         if not self.tracked_entities and self.next_free_entity_id == 0:
             # Init type transition matrix
             self.type_transition_matx = DataFrame(0,
@@ -30,20 +33,27 @@ class StateRepresentationBuilder():
 
             # init tracking for objects
             self._init_tracking(entities)
+            #print(f'Inititlaized Transition Matrix {self.type_transition_matx}')
+            #print(f'Inititliazed tracked entities {self.tracked_entities}')
+            #print(f'Next free entitiy ID {self.next_free_entity_id}')
 
         else:
             # Update type transition matrix if there are new types
             num_current_types = self.type_transition_matx.shape[0]
             for e_type in found_types:
+                # Wrong!
                 if e_type not in self.type_transition_matx.index:
                     # New, never before seen entity type, make new entry in trans matrix
                     # make column
                     self.type_transition_matx.insert(num_current_types, e_type, 0)
+                    num_current_types += 1
                     # make row
                     self.type_transition_matx.loc[e_type] = np.zeros(num_current_types, dtype=int)
 
                     # set initial transition to 0 because assumption: objects tend to stay the same
                     self.type_transition_matx.at[e_type, e_type] = 1
+
+                    #print(f'Updated transition matrix  {self.type_transition_matx}')
 
             # print(self.type_transition_matx)
 
@@ -59,6 +69,7 @@ class StateRepresentationBuilder():
         self.tracked_entities = []
         self.next_free_entity_id = 0
         self.do_not_exist = []
+        self.offset = 0
 
     def _init_tracking(self, entities):
         '''Set up tags for all existing entities'''
@@ -87,7 +98,7 @@ class StateRepresentationBuilder():
         similarity = self.sim_weights[0] * l_dist + \
                      self.sim_weights[1] * l_trans + \
                      self.sim_weights[2] * l_neighbors
-        similarity = similarity/3
+        similarity = similarity/4
 
         # print(l_dist, l_trans, l_neighbors, 'similarity:', similarity)
 
@@ -95,7 +106,7 @@ class StateRepresentationBuilder():
 
     def _update_tracking(self, new_entities):
         '''Track entities across time, using their last state'''
-
+        #print('We are inside the update tracking function')
         # if an entity is not matched with any in new entities,
         # place it in possibly_disappeared, and remove it if encountered
         # If there are any in possibly_disappeared by the time the
@@ -103,16 +114,24 @@ class StateRepresentationBuilder():
         possibly_disappeared = []
 
         newly_nonexistent = []
+
+        #print('We go through the tracked entities')
+        old_number_of_tracked_entities = len(self.tracked_entities)
         for i, tracked_e in enumerate(self.tracked_entities):
             # print(tracked_e.__dict__)
             if not tracked_e.exists:
-                print('Marked for deletion next loop', tracked_e.__dict__)
-                print('---')
+                #print('Marked for deletion next loop', tracked_e.__dict__)
+                #print('---')
                 newly_nonexistent.append(i)
                 continue
+
             for new_e_i, new_e in enumerate(new_entities):
                 # print('comparing', new_e.__dict__)
                 if self._is_same_entity(tracked_e, new_e):
+                    #print(f'We found a match for entity {tracked_e.id}')
+
+                    #print(f'The position of the new entity {new_e.position} ')
+                    #print(f'The postion of the old entity {tracked_e.position}')
                     # print('same entity')
                     # Update transition matrix
                     # (even if not transitioned, how often the type stays the same is important)
@@ -126,8 +145,8 @@ class StateRepresentationBuilder():
                     break
             else:
                 # new entity, and/or tracked_e disappeared
-                print('match not found', tracked_e.__dict__)
-                print('---')
+                #print('match not found', tracked_e.__dict__)
+                #print('---')
                 possibly_disappeared.append(i)
 
         for disapp_idx in possibly_disappeared: # well, they definitely disappeared
@@ -139,12 +158,21 @@ class StateRepresentationBuilder():
             # that the entity disappeared
             self.tracked_entities[disapp_idx].disappeared()
 
+        #print(f'Self-Do-Exist: {self.do_not_exist}')
+        #print(f'len {len(self.tracked_entities)}')
+        #print(f'These are the entities to be removed {self.do_not_exist}')
+        #print(f'These are the tracked entities {self.tracked_entities}')
         self.do_not_exist.reverse()
         for dne_idx in self.do_not_exist:
-            print('DNE', dne_idx)
-            del self.tracked_entities[dne_idx]
+            #print('DNE', dne_idx)
+            if self.offset<0:
+                del self.tracked_entities[dne_idx+self.offset]
+            else:
+                del self.tracked_entities[dne_idx]
 
         self.do_not_exist = newly_nonexistent   # to be removed next time
+        #print(f'These entities must be removed in the next timestep {self.do_not_exist} ')
+        #print(f'These are the current tracked entities {self.tracked_entities}')
 
         for entity_to_add in new_entities:
             entity_to_add.id = self.next_free_entity_id
@@ -156,6 +184,10 @@ class StateRepresentationBuilder():
 
             # increment id for next appearing object
             self.next_free_entity_id += 1
+
+        new_number_of_tracked_entities = len(self.tracked_entities)
+        self.offset = new_number_of_tracked_entities-old_number_of_tracked_entities
+
 
 
     def _build_representation(self):
@@ -173,8 +205,12 @@ class StateRepresentationBuilder():
         interactions_built = [] # pairs of entities for which interaction has already been built
         # Build interactions
         for entity in self.tracked_entities:
+
+            #print([(np.abs((x.position - entity.position)),(x.prev_state['position']-entity.prev_state['position'])-(x.position-entity.position)) for x in self.tracked_entities if np.all(np.abs((x.position - entity.position)) < self.neighbor_radius*2)])
+
             within_radius = [x for x in self.tracked_entities
-                             if np.all((x.position - entity.position) < self.neighbor_radius*2)]
+                             if np.all(np.abs((x.position - entity.position)) < self.neighbor_radius*2)]
+
             for w_r in within_radius:
                 sorted_e = (entity, w_r) if entity.entity_type < w_r.entity_type else (w_r, entity)
                 interact_ids = (sorted_e[0].id, sorted_e[1].id)
@@ -183,8 +219,8 @@ class StateRepresentationBuilder():
                     continue
 
                 # position change
-                loc_diff = (sorted_e[0].position - sorted_e[0].prev_state['position']) - \
-                                    (sorted_e[1].position - sorted_e[1].prev_state['position'])
+                loc_diff = (sorted_e[0].prev_state['position'] - sorted_e[1].prev_state['position']) - (sorted_e[0].position - sorted_e[1].position)
+                #print(f'The loc_diff is {loc_diff}')
                 types_before = (sorted_e[0].prev_state['entity_type'], sorted_e[1].prev_state['entity_type'])
                 types_after = (sorted_e[0].entity_type, sorted_e[1].entity_type)
                 if np.array_equal(loc_diff, (0, 0)) and np.array_equal(types_before, types_after):
@@ -193,7 +229,10 @@ class StateRepresentationBuilder():
                 interactions.append(interaction(sorted_e[0], sorted_e[1], loc_diff,
                                                 types_before, types_after))
                 interactions_built.append(interact_ids)
-
+        #print(f'We now print the calculated interactions')
+        #for interaction in interactions:
+         #   print(interaction)
+        #print(f'Number of Interactions {len(interactions)}')
         return interactions
 
     def _mark_transition(self, from_type, to_type):

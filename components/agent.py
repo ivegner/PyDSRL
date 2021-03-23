@@ -70,10 +70,13 @@ class DDQNAgent:
     def remember(self, state, action, reward, next_state, done):
         self.memory.append((state, action, reward, next_state, done))
 
-    def act(self, state):
-        if np.random.rand() <= self.epsilon:
-            return random.randrange(self.action_size)
-        act_values = self.model.predict(state)
+    def act(self, state,random=True):
+        if random:
+            if np.random.rand() <= self.epsilon:
+                return random.randrange(self.action_size)
+            act_values = self.model.predict(state)
+        else:
+            act_values = self.model.predict(state)
         return np.argmax(act_values[0])  # returns action
 
     def replay(self, batch_size):
@@ -98,24 +101,30 @@ class DDQNAgent:
 
 class TabularAgent:
     '''RL agent as described in the DSRL paper'''
-    def __init__(self, action_size, neighbor_radius=25):
+    def __init__(self, action_size,alpha,epsilon_decay,neighbor_radius=25):
         self.action_size = action_size
+        self.alpha = alpha
         self.epsilon = 1
-        self.epsilon_decay = 0.999
+        self.epsilon_decay = epsilon_decay
         self.epsilon_min = 0.1
         self.gamma = 0.95
         self.neighbor_radius=neighbor_radius
+        self.offset = neighbor_radius*2
         self.tables = {}
 
-    def act(self, state):
+    def act(self, state,random_act=True):
         '''
         Determines action to take based on given state
         State: Array of interactions
                (entities in each interaction are presorted by type for consistency)
         Returns: action to take, chosen e-greedily
         '''
+        if not random_act:
+            return np.argmax(self._total_rewards(state))
         if np.random.rand() <= self.epsilon:
-            print('random action, e:', self.epsilon)
+            #print('random action, e:', self.epsilon)
+            if self.epsilon > self.epsilon_min:
+                self.epsilon *= self.epsilon_decay
             return random.randrange(self.action_size)
 
         if self.epsilon > self.epsilon_min:
@@ -125,20 +134,37 @@ class TabularAgent:
 
     def update(self, state, action, reward, next_state, done):
         '''Update tables based on reward and action taken'''
-        curr_tr = self._total_rewards(state)
-        next_tr = self._total_rewards(next_state)
-        print('Reward for action {}: {}. Current total rewards: {}'.format(action, reward, curr_tr))
-        print('Next Total Reward:', next_tr)
+
+
 
         for interaction in state:
             type_1, type_2 = interaction['types_after'] # TODO resolve: should this too be types_before?
             table = self.tables.setdefault(type_1, {}).setdefault(type_2, self._make_table())
-
-            if done:
-                table[interaction['loc_difference']][action] = reward
+            id1,id2 = interaction['interaction']
+            interaction_next_state = [inter for inter in next_state if inter['interaction']==(id1,id2)]
+            if len(interaction_next_state)==0:
+                continue
+            elif len(interaction_next_state)>1:
+                raise ValueError('This should not happen')
             else:
-                table[interaction['loc_difference']][action] = \
-                    reward + self.gamma * (np.max(next_tr) - curr_tr[action])
+                #print('Now we should update the Q-values')
+                #print(f'The current reward is {reward}')
+                interaction_next_state = interaction_next_state[0]
+                interaction['loc_difference'] = (interaction['loc_difference'][0]+self.offset,interaction['loc_difference'][1]+self.offset)
+                interaction_next_state['loc_difference'] = (interaction_next_state['loc_difference'][0]+self.offset,interaction_next_state['loc_difference'][1]+self.offset)
+                #print(interaction_next_state['loc_difference'])
+                #print(interaction['loc_difference'])
+                next_action_value = table[interaction_next_state['loc_difference']]
+                #print(f'The next action value {next_action_value}')
+                if done:
+                    table[interaction['loc_difference']][action] = reward
+                else:
+                    #print(f'Q-value before update {table[interaction["loc_difference"]][action]}')
+                    #print(f'Location {interaction["loc_difference"]}')
+                    #print(f"The new value should be {table[interaction['loc_difference']][action] + self.alpha*(reward + self.gamma * np.max(next_action_value) - table[interaction['loc_difference']][action])}")
+                    #print(interaction['loc_difference'])
+                    table[interaction['loc_difference']][action] = table[interaction['loc_difference']][action] + self.alpha*(reward + self.gamma * np.max(next_action_value) - table[interaction['loc_difference']][action])
+                    #print(f'Q-value after update {table[interaction["loc_difference"]][action]}')
 
     def _total_rewards(self, interactions):
         action_rewards = np.zeros(self.action_size)
@@ -154,8 +180,8 @@ class TabularAgent:
         3-D table: rows = loc_difference_x, cols = loc_difference_y, z = q-values for actions
         Rows and cols added to as needed
         '''
-        return np.zeros((self.neighbor_radius * 2, self.neighbor_radius * 2, self.action_size),
-                        dtype=int)
+        return np.zeros((self.neighbor_radius * 8, self.neighbor_radius * 8, self.action_size),
+                        dtype=float)
 
     def save(self, filename):
         '''Save agent's tables'''
