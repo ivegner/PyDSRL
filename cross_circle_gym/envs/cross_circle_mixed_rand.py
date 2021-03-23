@@ -16,9 +16,12 @@ class CrossCircleMixedRand(CrossCircleBase):
                       'cross': np.zeros((self.field_dim, self.field_dim)),
                       'agent': np.zeros((self.field_dim, self.field_dim))
                      }
-        self.layout(random=True,
+        error = self.layout(random=True,
                     mixed=True,
                     min_entities=min_entities,
                     max_entities=max_entities,
                     random_agent=True)
+        if error==0:
+            return []
+
         return self.combined_state

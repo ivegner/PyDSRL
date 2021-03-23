@@ -15,9 +15,9 @@ POOL_SIZE = 2
 
 class SymbolAutoencoder():
     '''Implements the DSRL paper section 3.1. Extract entities from raw image'''
-    def __init__(self, input_shape, neighbor_radius=25):
+    def __init__(self, input_shape,filter_size,neighbor_radius=25):
         self.neighbor_radius = neighbor_radius
-
+        self.filter_size = filter_size
         input_img = Input(shape=input_shape)
         encoded = Conv2D(16, (5, 5), activation='relu', padding='same')(input_img)
         encoded = MaxPooling2D((POOL_SIZE, POOL_SIZE), padding='same')(encoded)
@@ -29,6 +29,8 @@ class SymbolAutoencoder():
         self.encoder = Model(input_img, encoded)
         self.autoencoder = Model(input_img, decoded)
         self.autoencoder.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+
+        self.repr_entity_activations = []
 
     def train(self, train_data, epochs=50, batch_size=128, shuffle=True,
               validation=None, tensorboard=False):
@@ -62,21 +64,22 @@ class SymbolAutoencoder():
         features -= background_value
         #apply the local maximum filter; all pixel of maximal value
         #in their neighborhood are set to 1
-        filtered = maximum_filter(features, size=(4, 4))    #TODO: Abstract size
-        filtered = np.asarray(filtered == features, dtype=int) - np.asarray(filtered == 0,
-                                                                            dtype=int)
+        filtered = maximum_filter(features, size=(self.filter_size, self.filter_size))    #TODO: Abstract size
+        filtered = np.asarray(filtered == features, dtype=int) - np.asarray(filtered == 0,dtype=int)
         filtered.reshape(encoded_image.shape[:-1])
         filtered *= POOL_SIZE # Pooling = downsampling = everything is scaled down by POOL_SIZE
         #2d image of the positions, and just the indices
         return filtered, np.transpose(np.nonzero(filtered))
 
-    def visualize(self, images):
+    def visualize(self, images,show=False):
         '''Visualize autoencoder processing steps'''
         if len(images) > 20:
             raise Exception('Too many visualization images, please provide <= 20')
         logger.info('Visualizing...')
 
+
         encoded_imgs = self.encode(images)
+        print(f'Encoded Image {encoded_imgs.shape}')
         position_maps = [self._extract_positions(x)[0] for x in encoded_imgs]
         decoded_imgs = self.predict(images)
 
@@ -90,14 +93,14 @@ class SymbolAutoencoder():
             plt_i = i+1
             # display original
             axis = plt.subplot(4, n_plots, plt_i)
-            plt.imshow(flatten_to_img(images[i]))
+            plt.imshow(images[i])
             plt.gray()
             axis.get_xaxis().set_visible(False)
             axis.get_yaxis().set_visible(False)
 
             # display reconstruction
             axis = plt.subplot(4, n_plots, plt_i + n_plots)
-            plt.imshow(flatten_to_img(decoded_imgs[i]))
+            plt.imshow(decoded_imgs[i])
             plt.gray()
             axis.get_xaxis().set_visible(False)
             axis.get_yaxis().set_visible(False)
@@ -117,8 +120,10 @@ class SymbolAutoencoder():
             axis.get_xaxis().set_visible(False)
             axis.get_yaxis().set_visible(False)
 
-        print('\nPlot visible, close it to proceed')
-        plt.show()
+        if show:
+            plt.show()
+        #print('\nPlot visible, close it to proceed')
+        return plt.gcf()
 
     def get_entities(self, image):
         '''
@@ -128,31 +133,35 @@ class SymbolAutoencoder():
                  etc.
                 }
         '''
-
+        #print('Inside the get entities function')
         encoded = self.encode(image.reshape((1,) + image.shape))[0]
         pos_map, entities = self._extract_positions(encoded)
 
-        repr_entity_activations = []    # Representative depth slice for a certain type
+        #print(f'Number of identified entities: {len(entities)}')
+        #print(f'Number of identified entities: {entities.shape}')
+        #print(entities)
+
+
         typed_entities = []   # Actual Entity() array
         found_types = []
         # TODO: Enhancements: knn classifier instead of this caveman shit
         for entity_coords in entities:
             activations = encoded[entity_coords[0], entity_coords[1], :]
-            if not repr_entity_activations:
-                repr_entity_activations.append(activations)
+            if not self.repr_entity_activations:
+                self.repr_entity_activations.append(activations)
                 e_type = 'type0'
 
             else:
-                for i, e_activations in enumerate(repr_entity_activations):
+                for i, e_activations in enumerate(self.repr_entity_activations):
                     dist = sqeuclidean(activations, e_activations)
                     if dist < ENTITY_DIST_THRESHOLD:    # Same type
-                        repr_entity_activations[i] = (e_activations + activations) / 2
+                        self.repr_entity_activations[i] = (e_activations + activations) / 2
                         e_type = 'type' + str(i)
                         break
                 else:
                     # No type match, make new type
-                    repr_entity_activations.append(activations)
-                    new_type_idx = len(repr_entity_activations) - 1
+                    self.repr_entity_activations.append(activations)
+                    new_type_idx = len(self.repr_entity_activations) - 1
                     e_type = 'type' + str(new_type_idx)
 
             min_coords = entity_coords-self.neighbor_radius
@@ -170,12 +179,12 @@ class SymbolAutoencoder():
         return typed_entities, found_types
 
     @staticmethod
-    def from_saved(filename, input_shape, neighbor_radius=None):
+    def from_saved(filename, input_shape, filter_size, neighbor_radius=None):
         '''Load autoencoder weights from filename, given input shape'''
         if neighbor_radius is not None:
-            ret = SymbolAutoencoder(input_shape, neighbor_radius=neighbor_radius)
+            ret = SymbolAutoencoder(input_shape,filter_size, neighbor_radius=neighbor_radius)
         else:
-            ret = SymbolAutoencoder(input_shape)
+            ret = SymbolAutoencoder(input_shape,filter_size)
         ret.autoencoder.load_weights(filename)
         return ret
 
@@ -214,3 +223,10 @@ class Entity():
     def _transition(self, from_type, to_type):
         self.last_transition = [from_type, to_type]
         self.entity_type = to_type
+
+    def __repr__(self):
+        text = ''
+        text += f'Entity ID {self.id} \n'
+        text += f'Entitiy Type {self.entity_type} \n'
+        text += f'Position {self.position} \n'
+        return text
